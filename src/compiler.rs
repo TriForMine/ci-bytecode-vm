@@ -14,11 +14,35 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn emit_return(&mut self) {
+        self.chunk.write(OpCode::Return.into(), 123);
+    }
+
+    fn emit_byte(&mut self, byte: u8) {
+        self.chunk.write(byte.into(), 123);
+    }
+
     pub fn compile(&mut self, source: &'a str) -> bool {
-        let mut parser = Parser::new(source, &mut self.chunk);
+        let mut scanner = Scanner::new(source);
+        let mut line = 0;
 
-        parser.parse();
+        loop {
+            let token = scanner.scan_token();
 
-        !parser.had_error
+            if token.line != line {
+                print!("{:4} ", token.line);
+                line = token.line;
+            } else {
+                print!("   | ");
+            }
+            print!("{:2?} {:?}\n", token.token_type, token.lexeme);
+
+            if token.token_type == TokenType::Eof {
+                break;
+            }
+        }
+
+        self.emit_return();
+        true
     }
 }
