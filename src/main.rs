@@ -6,10 +6,9 @@ use parking_lot::RwLock;
 mod chunk;
 mod debug;
 mod vm;
-mod compiler;
 mod scanner;
 mod token_type;
-mod parser;
+mod compiler;
 mod parser_rules;
 mod value;
 

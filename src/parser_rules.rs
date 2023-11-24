@@ -1,11 +1,11 @@
 use lazy_static::lazy_static;
 use std::collections::HashMap;
-use crate::parser::{Parser, Precedence};
+use crate::compiler::{Compiler, Precedence};
 use crate::token_type::TokenType;
 
 pub struct ParseRule {
-    pub prefix: Option<Box<fn(&Parser, bool)>>,
-    pub infix: Option<Box<fn(&Parser, bool)>>,
+    pub prefix: Option<Box<fn(&Compiler, bool)>>,
+    pub infix: Option<Box<fn(&Compiler, bool)>>,
     pub precedence: Precedence,
 }
 
@@ -13,7 +13,7 @@ lazy_static! {
     pub static ref RULES: HashMap<TokenType, ParseRule> = {
         let mut m = HashMap::new();
         m.insert(TokenType::LeftParen, ParseRule {
-            prefix: Some(Box::new(Parser::grouping)),
+            prefix: Some(Box::new(Compiler::grouping)),
             infix: None,
             precedence: Precedence::None,
         });
@@ -43,13 +43,13 @@ lazy_static! {
             precedence: Precedence::None,
         });
         m.insert(TokenType::Minus, ParseRule {
-            prefix: Some(Box::new(Parser::unary)),
-            infix: Some(Box::new(Parser::binary)),
+            prefix: Some(Box::new(Compiler::unary)),
+            infix: Some(Box::new(Compiler::binary)),
             precedence: Precedence::Term,
         });
         m.insert(TokenType::Plus, ParseRule {
             prefix: None,
-            infix: Some(Box::new(Parser::binary)),
+            infix: Some(Box::new(Compiler::binary)),
             precedence: Precedence::Term,
         });
         m.insert(TokenType::Semicolon, ParseRule {
@@ -59,12 +59,12 @@ lazy_static! {
         });
         m.insert(TokenType::Slash, ParseRule {
             prefix: None,
-            infix: Some(Box::new(Parser::binary)),
+            infix: Some(Box::new(Compiler::binary)),
             precedence: Precedence::Factor,
         });
         m.insert(TokenType::Star, ParseRule {
             prefix: None,
-            infix: Some(Box::new(Parser::binary)),
+            infix: Some(Box::new(Compiler::binary)),
             precedence: Precedence::Factor,
         });
         m.insert(TokenType::Colon, ParseRule {
@@ -73,13 +73,13 @@ lazy_static! {
             precedence: Precedence::None,
         });
         m.insert(TokenType::Bang, ParseRule {
-            prefix: Some(Box::new(Parser::unary)),
+            prefix: Some(Box::new(Compiler::unary)),
             infix: None,
             precedence: Precedence::None,
         });
         m.insert(TokenType::BangEqual, ParseRule {
             prefix: None,
-            infix: Some(Box::new(Parser::binary)),
+            infix: Some(Box::new(Compiler::binary)),
             precedence: Precedence::Equality,
         });
         m.insert(TokenType::Equal, ParseRule {
@@ -89,47 +89,47 @@ lazy_static! {
         });
         m.insert(TokenType::EqualEqual, ParseRule {
             prefix: None,
-            infix: Some(Box::new(Parser::binary)),
+            infix: Some(Box::new(Compiler::binary)),
             precedence: Precedence::Equality,
         });
         m.insert(TokenType::Greater, ParseRule {
             prefix: None,
-            infix: Some(Box::new(Parser::binary)),
+            infix: Some(Box::new(Compiler::binary)),
             precedence: Precedence::Comparison,
         });
         m.insert(TokenType::GreaterEqual, ParseRule {
             prefix: None,
-            infix: Some(Box::new(Parser::binary)),
+            infix: Some(Box::new(Compiler::binary)),
             precedence: Precedence::Comparison,
         });
         m.insert(TokenType::Less, ParseRule {
             prefix: None,
-            infix: Some(Box::new(Parser::binary)),
+            infix: Some(Box::new(Compiler::binary)),
             precedence: Precedence::Comparison,
         });
         m.insert(TokenType::LessEqual, ParseRule {
             prefix: None,
-            infix: Some(Box::new(Parser::binary)),
+            infix: Some(Box::new(Compiler::binary)),
             precedence: Precedence::Comparison,
         });
         m.insert(TokenType::Identifier, ParseRule {
-            prefix: Some(Box::new(Parser::variable)),
+            prefix: Some(Box::new(Compiler::variable)),
             infix: None,
             precedence: Precedence::None,
         });
         m.insert(TokenType::String, ParseRule {
-            prefix: Some(Box::new(Parser::string)),
+            prefix: Some(Box::new(Compiler::string)),
             infix: None,
             precedence: Precedence::None,
         });
         m.insert(TokenType::Number, ParseRule {
-            prefix: Some(Box::new(Parser::number)),
+            prefix: Some(Box::new(Compiler::number)),
             infix: None,
             precedence: Precedence::None,
         });
         m.insert(TokenType::And, ParseRule {
             prefix: None,
-            infix: Some(Box::new(Parser::and)),
+            infix: Some(Box::new(Compiler::and)),
             precedence: Precedence::And,
         });
         m.insert(TokenType::Class, ParseRule {
@@ -143,7 +143,7 @@ lazy_static! {
             precedence: Precedence::None,
         });
         m.insert(TokenType::False, ParseRule {
-            prefix: Some(Box::new(Parser::literal)),
+            prefix: Some(Box::new(Compiler::literal)),
             infix: None,
             precedence: Precedence::None,
         });
@@ -163,13 +163,13 @@ lazy_static! {
             precedence: Precedence::None,
         });
         m.insert(TokenType::Nil, ParseRule {
-            prefix: Some(Box::new(Parser::literal)),
+            prefix: Some(Box::new(Compiler::literal)),
             infix: None,
             precedence: Precedence::None,
         });
         m.insert(TokenType::Or, ParseRule {
             prefix: None,
-            infix: Some(Box::new(Parser::or)),
+            infix: Some(Box::new(Compiler::or)),
             precedence: Precedence::Or,
         });
         m.insert(TokenType::Print, ParseRule {
@@ -193,7 +193,7 @@ lazy_static! {
             precedence: Precedence::None,
         });
         m.insert(TokenType::True, ParseRule {
-            prefix: Some(Box::new(Parser::literal)),
+            prefix: Some(Box::new(Compiler::literal)),
             infix: None,
             precedence: Precedence::None,
         });

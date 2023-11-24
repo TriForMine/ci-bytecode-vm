@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use crate::chunk::{Chunk, OpCode};
 use crate::compiler::Compiler;
-use crate::value::Value;
+use crate::value::{FunctionType, Value};
 use parking_lot::RwLock;
 
 pub const DEBUG_PRINT_CODE: bool = true;
@@ -49,9 +49,9 @@ impl VM {
     pub fn interpret(&mut self, source: String) -> InterpretResult {
         self.reset();
 
-        let mut compiler = Compiler::new(self.chunk.clone());
+        let mut compiler = Compiler::new(FunctionType::Script);
 
-        let function = compiler.compile(&source);
+        let function = compiler.compile(source);
 
         let res = match function {
             Some(function) => {
