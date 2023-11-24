@@ -59,6 +59,7 @@ impl Function {
     }
 }
 
+#[derive(PartialEq)]
 pub enum FunctionType {
     Function,
     Script,

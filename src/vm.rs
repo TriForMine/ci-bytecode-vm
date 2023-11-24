@@ -4,6 +4,7 @@ use crate::chunk::{Chunk, OpCode};
 use crate::compiler::Compiler;
 use crate::value::{FunctionType, Value};
 use parking_lot::RwLock;
+use crate::scanner::Scanner;
 
 pub const DEBUG_PRINT_CODE: bool = true;
 pub const DEBUG_TRACE_EXECUTION: bool = false;
@@ -49,9 +50,10 @@ impl VM {
     pub fn interpret(&mut self, source: String) -> InterpretResult {
         self.reset();
 
-        let mut compiler = Compiler::new(FunctionType::Script);
+        let scanner = Arc::new(RwLock::new(Scanner::new(source)));
+        let mut compiler = Compiler::new(FunctionType::Script, scanner);
 
-        let function = compiler.compile(source);
+        let function = compiler.compile();
 
         let res = match function {
             Some(function) => {
@@ -121,7 +123,12 @@ impl VM {
 
             match instruction {
                 OpCode::Return => {
-                    return InterpretResult::Ok;
+                    let value = self.pop().unwrap();
+                    self.frames.pop();
+                    if self.frames.len() == 0 {
+                        return InterpretResult::Ok;
+                    }
+                    self.push(value);
                 }
                 OpCode::Constant => {
                     let constant = self.read_constant();
@@ -182,23 +189,28 @@ impl VM {
                 }
                 OpCode::GetLocal => {
                     let slot = self.read_byte();
+
+                    println!("Locals {:?}", self.frames.last().unwrap().slots);
+                    println!("Gettting local slot {}", slot);
+
                     let value = self.frames.last().unwrap().slots[slot as usize].clone();
                     self.push(value);
                 }
                 OpCode::SetLocal => {
+                    println!("Set Locals {:?}", self.frames.last().unwrap().slots);
                     let slot = self.read_byte();
-                    let value = self.peek().unwrap().clone();
+                    let value = self.peek(0).unwrap().clone();
                     self.frames.last_mut().unwrap().slots[slot as usize] = value;
                 }
                 OpCode::JumpIfFalse => {
                     let offset = self.read_short();
-                    if self.peek().unwrap().is_falsey() {
+                    if self.peek(0).unwrap().is_falsey() {
                         self.frames.last_mut().unwrap().ip += offset as usize;
                     }
                 }
                 OpCode::JumpIfTrue => {
                     let offset = self.read_short();
-                    if !self.peek().unwrap().is_falsey() {
+                    if !self.peek(0).unwrap().is_falsey() {
                         self.frames.last_mut().unwrap().ip += offset as usize;
                     }
                 }
@@ -212,10 +224,16 @@ impl VM {
                 }
                 OpCode::Duplicate => {
                     if self.stack.len() > 0 {
-                        let value = self.peek().unwrap().clone();
+                        let value = self.peek(0).unwrap().clone();
                         self.push(value);
                     } else {
                         self.runtime_error("Stack is empty");
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                OpCode::Call => {
+                    let arg_count = self.read_byte();
+                    if !self.call_value(self.peek(arg_count as usize).unwrap().clone(), arg_count) {
                         return InterpretResult::RuntimeError;
                     }
                 }
@@ -223,20 +241,47 @@ impl VM {
         }
     }
 
-    fn runtime_error(&self, message: &str) {
-        eprintln!("{}", message);
-        let frame = self.frames.last().unwrap();
-        let function = frame.function.clone();
-        match function {
-            Value::Function(ref function) => {
-                let function = function.read();
-                let chunk = function.chunk.read();
-                let instruction = frame.ip - 1;
-                let line = chunk.lines[instruction];
-                eprintln!("[line {}] in script", line);
+    fn call_value(&mut self, callee: Value, arg_count: u8) -> bool {
+        match callee {
+            Value::Function(function) => {
+                self.call(function, arg_count);
+                true
             }
-            _ => panic!("Expected function"),
+            _ => {
+                self.runtime_error("Can only call functions and classes");
+                false
+            }
         }
+    }
+
+    fn call(&mut self, function: Arc<RwLock<crate::value::Function>>, arg_count: u8) {
+        if arg_count != function.read().arity as u8 {
+            self.runtime_error(format!("Expected {} arguments but got {}", function.read().arity, arg_count).as_str());
+            return;
+        }
+        self.frames.push(CallFrame {
+            function: Value::Function(function.clone()),
+            ip: 0,
+            slots: Vec::new(),
+        });
+    }
+
+    fn runtime_error(&mut self, message: &str) {
+        eprintln!("{}", message);
+
+        for frame in self.frames.iter().rev() {
+            match frame.function {
+                Value::Function(ref function) => {
+                    let function = function.read();
+                    let chunk = function.chunk.read();
+                    let line = chunk.lines[frame.ip - 1];
+                    eprintln!("[line {}] in {}", line, function.name);
+                }
+                _ => panic!("Expected function"),
+            }
+        }
+
+        self.stack.clear();
     }
 
     #[inline]
@@ -294,7 +339,7 @@ impl VM {
     }
 
     #[inline]
-    fn peek(&self) -> Option<&Value> {
-        self.stack.last()
+    fn peek(&self, distance: usize) -> Option<&Value> {
+        self.stack.get(self.stack.len() - 1 - distance)
     }
 }

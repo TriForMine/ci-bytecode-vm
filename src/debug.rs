@@ -85,6 +85,7 @@ impl Dissassembler {
             OpCode::Loop => self.jump_instruction("OP_LOOP"),
             OpCode::Duplicate => self.simple_instruction("OP_DUPLICATE"),
             OpCode::JumpIfTrue => self.jump_instruction("OP_JUMP_IF_TRUE"),
+            OpCode::Call => self.byte_instruction("OP_CALL"),
         }
     }
 

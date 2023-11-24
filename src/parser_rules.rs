@@ -14,8 +14,8 @@ lazy_static! {
         let mut m = HashMap::new();
         m.insert(TokenType::LeftParen, ParseRule {
             prefix: Some(Box::new(Compiler::grouping)),
-            infix: None,
-            precedence: Precedence::None,
+            infix: Some(Box::new(Compiler::call)),
+            precedence: Precedence::Call,
         });
         m.insert(TokenType::RightParen, ParseRule {
             prefix: None,

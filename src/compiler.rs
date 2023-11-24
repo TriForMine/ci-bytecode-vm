@@ -25,7 +25,7 @@ pub enum Precedence {
 }
 
 struct ScannerState {
-    scanner: Scanner,
+    scanner: Arc<RwLock<Scanner>>,
     current: Box<Token>,
     previous: Box<Token>,
 }
@@ -51,10 +51,10 @@ pub struct Compiler {
 }
 
 impl Compiler {
-    pub fn new(function_type: FunctionType) -> Compiler {
+    pub fn new(function_type: FunctionType, scanner: Arc<RwLock<Scanner>>) -> Self {
         Compiler {
             scanner_state: Arc::new(RwLock::new(ScannerState {
-                scanner: Scanner::new(String::new()),
+                scanner,
                 current: Box::new(Token::new()),
                 previous: Box::new(Token::new()),
             })),
@@ -69,22 +69,38 @@ impl Compiler {
         }
     }
 
+    pub fn new_enclosed(&self, function_type: FunctionType) -> Self {
+        let function = match function_type {
+            FunctionType::Function => Function::new(String::from(self.scanner_state.read().previous.clone().lexeme)),
+            FunctionType::Script => Function::new_script(),
+        };
+
+        Compiler {
+            scanner_state: self.scanner_state.clone(),
+            error_state: self.error_state.clone(),
+            locals: Arc::new(RwLock::new(Vec::new())),
+            scope_depth: Arc::new(AtomicUsize::new(0)),
+            function: Arc::new(RwLock::new(function)),
+            function_type: Arc::new(RwLock::new(function_type)),
+        }
+    }
+
     fn get_chunk(&self) -> Arc<RwLock<Chunk>> {
         let function = self.function.read();
         function.chunk.clone()
     }
 
-    pub fn compile(&mut self, source: String) -> Option<Arc<RwLock<Function>>> {
-        {
-            let mut scanner_state = self.scanner_state.write();
-            scanner_state.scanner = Scanner::new(source);
-        }
+    pub fn compile(&mut self) -> Option<Arc<RwLock<Function>>> {
         self.advance();
 
         while self.scanner_state.read().current.token_type != TokenType::Eof {
             self.declaration();
         }
 
+        self.end_compiler()
+    }
+
+    fn end_compiler(&self) -> Option<Arc<RwLock<Function>>> {
         self.emit_return();
 
         if !self.error_state.read().had_error && DEBUG_PRINT_CODE {
@@ -104,7 +120,8 @@ impl Compiler {
         scanner_state.previous = scanner_state.current.clone();
 
         loop {
-            scanner_state.current = Box::new(scanner_state.scanner.scan_token());
+            let scanner = scanner_state.scanner.clone();
+            scanner_state.current = Box::new(scanner.write().scan_token());
 
             if scanner_state.current.token_type != TokenType::Error {
                 break;
@@ -157,6 +174,7 @@ impl Compiler {
     }
 
     fn emit_return(&self) {
+        self.emit_byte(OpCode::Nil.into());
         self.emit_byte(OpCode::Return.into());
     }
 
@@ -184,7 +202,9 @@ impl Compiler {
     }
 
     fn declaration(&self) {
-        if self.match_token(TokenType::Var) {
+        if self.match_token(TokenType::Fun) {
+            self.fun_declaration();
+        } else if self.match_token(TokenType::Var) {
             self.var_declaration();
         } else {
             self.statement();
@@ -193,6 +213,43 @@ impl Compiler {
         if self.error_state.read().panic_mode {
             self.synchronize();
         }
+    }
+
+    fn fun_declaration(&self) {
+        let global = self.parse_variable("Expect function name.");
+        self.mark_initialized();
+        self.function(FunctionType::Function);
+        self.define_variable(global);
+    }
+
+    fn function(&self, function_type: FunctionType) {
+        let compiler = self.new_enclosed(function_type);
+        compiler.begin_scope();
+
+        compiler.consume(TokenType::LeftParen, "Expect '(' after function name.");
+
+        if !compiler.check(&TokenType::RightParen) {
+            loop {
+                compiler.function.write().arity += 1;
+                if compiler.function.read().arity > 255 {
+                    compiler.error_at_current("Cannot have more than 255 parameters.");
+                }
+
+                let constant = compiler.parse_variable("Expect parameter name.");
+                compiler.define_variable(constant);
+
+                if !compiler.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+
+        compiler.consume(TokenType::RightParen, "Expect ')' after parameters.");
+        compiler.consume(TokenType::LeftBrace, "Expect '{' before function body.");
+        compiler.block();
+
+        let function = compiler.end_compiler().unwrap();
+        self.emit_bytes(OpCode::Constant.into(), self.make_constant(Value::Function(function)));
     }
 
     fn var_declaration(&self) {
@@ -214,6 +271,8 @@ impl Compiler {
             self.print_statement();
         } else if self.match_token(TokenType::If) {
             self.if_statement();
+        } else if self.match_token(TokenType::Return) {
+            self.return_statement();
         } else if self.match_token(TokenType::While) {
             self.while_statement();
         } else if self.match_token(TokenType::For) {
@@ -226,6 +285,23 @@ impl Compiler {
             self.end_scope();
         } else {
             self.expression_statement();
+        }
+    }
+
+    fn return_statement(&self) {
+        if *self.function_type.read() == FunctionType::Script {
+            self.error("Cannot return from top-level code.");
+        }
+
+        if self.match_token(TokenType::Semicolon) {
+            self.emit_return();
+        } else {
+            if *self.function_type.read() == FunctionType::Script {
+                self.error("Cannot return a value from top-level code.");
+            }
+            self.expression();
+            self.consume(TokenType::Semicolon, "Expect ';' after return value.");
+            self.emit_byte(OpCode::Return.into());
         }
     }
 
@@ -493,6 +569,7 @@ impl Compiler {
 
         if can_assign && self.match_token(TokenType::Equal) {
             self.expression();
+            println!("{} {}", set_op, arg);
             self.emit_bytes(set_op.into(), arg);
         } else {
             self.emit_bytes(get_op.into(), arg);
@@ -564,6 +641,30 @@ impl Compiler {
         }
     }
 
+    pub fn call(&self, _can_assign: bool) {
+        let arg_count = self.argument_list();
+        self.emit_bytes(OpCode::Call.into(), arg_count);
+    }
+
+    fn argument_list(&self) -> u8 {
+        let mut arg_count = 0;
+        if !self.check(&TokenType::RightParen) {
+            loop {
+                self.expression();
+                if arg_count == 255 {
+                    self.error("Cannot have more than 255 arguments.");
+                }
+                arg_count += 1;
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+
+        self.consume(TokenType::RightParen, "Expect ')' after arguments.");
+        arg_count
+    }
+
     pub fn literal(&self, _can_assign: bool) {
         match self.scanner_state.read().previous.clone().token_type {
             TokenType::False => self.emit_byte(OpCode::False.into()),
@@ -619,6 +720,10 @@ impl Compiler {
     }
 
     fn mark_initialized(&self) {
+        if self.scope_depth.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            return;
+        }
+
         let mut locals = self.locals.write();
         let length = locals.len();
         locals[length - 1].depth = self.scope_depth.load(std::sync::atomic::Ordering::SeqCst);
@@ -644,6 +749,7 @@ impl Compiler {
         if self.scope_depth.load(std::sync::atomic::Ordering::SeqCst) == 0 {
             return;
         }
+
 
         let name = self.scanner_state.read().previous.clone();
 

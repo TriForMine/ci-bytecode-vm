@@ -1,5 +1,4 @@
 use std::fmt::Display;
-use std::sync::Arc;
 use crate::debug::Dissassembler;
 use crate::value::Value;
 
@@ -30,6 +29,7 @@ pub enum OpCode {
     Loop,
     Duplicate,
     JumpIfTrue,
+    Call,
 }
 
 impl From<u8> for OpCode {
@@ -61,6 +61,7 @@ impl From<u8> for OpCode {
             0x18 => OpCode::Loop,
             0x19 => OpCode::Duplicate,
             0x1A => OpCode::JumpIfTrue,
+            0x1B => OpCode::Call,
             _ => unreachable!(),
         }
     }
@@ -95,6 +96,7 @@ impl From<OpCode> for u8 {
             OpCode::Loop => 0x18,
             OpCode::Duplicate => 0x19,
             OpCode::JumpIfTrue => 0x1A,
+            OpCode::Call => 0x1B,
         }
     }
 }
@@ -128,6 +130,7 @@ impl Display for OpCode {
             OpCode::Loop => write!(f, "LOOP"),
             OpCode::Duplicate => write!(f, "DUPLICATE"),
             OpCode::JumpIfTrue => write!(f, "JUMP_IF_TRUE"),
+            OpCode::Call => write!(f, "CALL"),
         }
     }
 }
