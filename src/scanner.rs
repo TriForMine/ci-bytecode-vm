@@ -18,8 +18,8 @@ impl Token {
     }
 }
 
-pub struct Scanner<'a> {
-    pub(crate) source: &'a str,
+pub struct Scanner {
+    pub source: String,
     // Pointer to the start of the current lexeme
     start: usize,
     // Pointer to the current character
@@ -27,8 +27,8 @@ pub struct Scanner<'a> {
     pub(crate) line: usize,
 }
 
-impl<'a> Scanner<'a> {
-    pub fn new(source: &'a str) -> Self {
+impl Scanner {
+    pub fn new(source: String) -> Self {
         Scanner {
             source,
             start: 0,
@@ -68,6 +68,7 @@ impl<'a> Scanner<'a> {
             '+' => self.make_token(TokenType::Plus),
             '/' => self.make_token(TokenType::Slash),
             '*' => self.make_token(TokenType::Star),
+            ':' => self.make_token(TokenType::Colon),
             '!' => {
                 if self.match_char('=') {
                     self.make_token(TokenType::BangEqual)
@@ -156,7 +157,20 @@ impl<'a> Scanner<'a> {
     fn identifier_type(&self) -> TokenType {
         match self.source.chars().nth(self.start).unwrap() {
             'a' => self.check_keyword(1, 2, "nd", TokenType::And),
-            'c' => self.check_keyword(1, 4, "lass", TokenType::Class),
+            'b' => self.check_keyword(1, 4, "reak", TokenType::Break),
+            'c' => {
+                if self.current - self.start > 1 {
+                    match self.source.chars().nth(self.start + 1).unwrap() {
+                        'a' => self.check_keyword(2, 2, "se", TokenType::Case),
+                        'o' => self.check_keyword(2, 6, "ntinue", TokenType::Continue),
+                        'l' => self.check_keyword(2, 2, "as", TokenType::Class),
+                        _ => TokenType::Identifier,
+                    }
+                } else {
+                    TokenType::Identifier
+                }
+            },
+            'd' => self.check_keyword(1, 6, "efault", TokenType::Default),
             'e' => self.check_keyword(1, 3, "lse", TokenType::Else),
             'f' => {
                 if self.current - self.start > 1 {
@@ -175,7 +189,17 @@ impl<'a> Scanner<'a> {
             'o' => self.check_keyword(1, 1, "r", TokenType::Or),
             'p' => self.check_keyword(1, 4, "rint", TokenType::Print),
             'r' => self.check_keyword(1, 5, "eturn", TokenType::Return),
-            's' => self.check_keyword(1, 4, "uper", TokenType::Super),
+            's' => {
+                if self.current - self.start > 1 {
+                    match self.source.chars().nth(self.start + 1).unwrap() {
+                        'u' => self.check_keyword(2, 3, "per", TokenType::Super),
+                        'w' => self.check_keyword(2, 4, "itch", TokenType::Switch),
+                        _ => TokenType::Identifier,
+                    }
+                } else {
+                    TokenType::Identifier
+                }
+            }
             't' => {
                 if self.current - self.start > 1 {
                     match self.source.chars().nth(self.start + 1).unwrap() {

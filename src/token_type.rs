@@ -1,8 +1,9 @@
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Eq, Hash)]
 pub enum TokenType {
     // Single-character tokens.
     LeftParen, RightParen, LeftBrace, RightBrace,
     Comma, Dot, Minus, Plus, Semicolon, Slash, Star,
+    Colon,
 
     // One or two character tokens.
     Bang, BangEqual,
@@ -16,6 +17,7 @@ pub enum TokenType {
     // Keywords.
     And, Class, Else, False, Fun, For, If, Nil, Or,
     Print, Return, Super, This, True, Var, While,
+    Switch, Case, Break, Default, Continue,
 
     Eof, Error,
 }

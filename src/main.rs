@@ -1,5 +1,7 @@
 use std::io::Write;
-use crate::chunk::{Chunk, OpCode};
+use std::sync::Arc;
+use crate::chunk::{Chunk};
+use parking_lot::RwLock;
 
 mod chunk;
 mod debug;
@@ -8,6 +10,8 @@ mod compiler;
 mod scanner;
 mod token_type;
 mod parser;
+mod parser_rules;
+mod value;
 
 fn repl(vm: &mut vm::VM) {
     loop {
@@ -40,8 +44,8 @@ fn run_file(path: &str, vm: &mut vm::VM) {
 fn main() {
     let args = std::env::args().collect::<Vec<String>>();
 
-    let mut chunk = Chunk::new();
-    let mut vm = vm::VM::new(&mut chunk);
+    let chunk = Arc::new(RwLock::new(Chunk::new()));
+    let mut vm = vm::VM::new(chunk);
 
     if args.len() == 1 {
         repl(&mut vm);

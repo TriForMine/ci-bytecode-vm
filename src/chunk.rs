@@ -1,5 +1,7 @@
 use std::fmt::Display;
+use std::sync::Arc;
 use crate::debug::Dissassembler;
+use crate::value::Value;
 
 pub enum OpCode {
     Return = 0x01,
@@ -9,6 +11,25 @@ pub enum OpCode {
     Multiply,
     Divide,
     Constant,
+    Nil,
+    True,
+    False,
+    Not,
+    Equal,
+    Greater,
+    Less,
+    Print,
+    Pop,
+    DefineGlobal,
+    GetGlobal,
+    SetGlobal,
+    GetLocal,
+    SetLocal,
+    JumpIfFalse,
+    Jump,
+    Loop,
+    Duplicate,
+    JumpIfTrue,
 }
 
 impl From<u8> for OpCode {
@@ -21,7 +42,26 @@ impl From<u8> for OpCode {
             0x05 => OpCode::Multiply,
             0x06 => OpCode::Divide,
             0x07 => OpCode::Constant,
-            _ => panic!("Unknown opcode {}", byte),
+            0x08 => OpCode::Nil,
+            0x09 => OpCode::True,
+            0x0A => OpCode::False,
+            0x0B => OpCode::Not,
+            0x0C => OpCode::Equal,
+            0x0D => OpCode::Greater,
+            0x0E => OpCode::Less,
+            0x0F => OpCode::Print,
+            0x10 => OpCode::Pop,
+            0x11 => OpCode::DefineGlobal,
+            0x12 => OpCode::GetGlobal,
+            0x13 => OpCode::SetGlobal,
+            0x14 => OpCode::GetLocal,
+            0x15 => OpCode::SetLocal,
+            0x16 => OpCode::JumpIfFalse,
+            0x17 => OpCode::Jump,
+            0x18 => OpCode::Loop,
+            0x19 => OpCode::Duplicate,
+            0x1A => OpCode::JumpIfTrue,
+            _ => unreachable!(),
         }
     }
 }
@@ -36,6 +76,25 @@ impl From<OpCode> for u8 {
             OpCode::Multiply => 0x05,
             OpCode::Divide => 0x06,
             OpCode::Constant => 0x07,
+            OpCode::Nil => 0x08,
+            OpCode::True => 0x09,
+            OpCode::False => 0x0A,
+            OpCode::Not => 0x0B,
+            OpCode::Equal => 0x0C,
+            OpCode::Greater => 0x0D,
+            OpCode::Less => 0x0E,
+            OpCode::Print => 0x0F,
+            OpCode::Pop => 0x10,
+            OpCode::DefineGlobal => 0x11,
+            OpCode::GetGlobal => 0x12,
+            OpCode::SetGlobal => 0x13,
+            OpCode::GetLocal => 0x14,
+            OpCode::SetLocal => 0x15,
+            OpCode::JumpIfFalse => 0x16,
+            OpCode::Jump => 0x17,
+            OpCode::Loop => 0x18,
+            OpCode::Duplicate => 0x19,
+            OpCode::JumpIfTrue => 0x1A,
         }
     }
 }
@@ -50,13 +109,33 @@ impl Display for OpCode {
             OpCode::Multiply => write!(f, "MULTIPLY"),
             OpCode::Divide => write!(f, "DIVIDE"),
             OpCode::Negate => write!(f, "NEGATE"),
+            OpCode::Nil => write!(f, "NIL"),
+            OpCode::True => write!(f, "TRUE"),
+            OpCode::False => write!(f, "FALSE"),
+            OpCode::Not => write!(f, "NOT"),
+            OpCode::Equal => write!(f, "EQUAL"),
+            OpCode::Greater => write!(f, "GREATER"),
+            OpCode::Less => write!(f, "LESS"),
+            OpCode::Print => write!(f, "PRINT"),
+            OpCode::Pop => write!(f, "POP"),
+            OpCode::DefineGlobal => write!(f, "DEFINE_GLOBAL"),
+            OpCode::GetGlobal => write!(f, "GET_GLOBAL"),
+            OpCode::SetGlobal => write!(f, "SET_GLOBAL"),
+            OpCode::GetLocal => write!(f, "GET_LOCAL"),
+            OpCode::SetLocal => write!(f, "SET_LOCAL"),
+            OpCode::JumpIfFalse => write!(f, "JUMP_IF_FALSE"),
+            OpCode::Jump => write!(f, "JUMP"),
+            OpCode::Loop => write!(f, "LOOP"),
+            OpCode::Duplicate => write!(f, "DUPLICATE"),
+            OpCode::JumpIfTrue => write!(f, "JUMP_IF_TRUE"),
         }
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Chunk {
     pub code: Vec<u8>,
-    pub constants: Vec<f64>,
+    pub constants: Vec<Value>,
     pub lines: Vec<usize>,
 }
 
@@ -80,7 +159,7 @@ impl Chunk {
         self.lines.push(line);
     }
 
-    pub fn write_constant(&mut self, value: f64) -> usize {
+    pub fn write_constant(&mut self, value: Value) -> usize {
         self.constants.push(value);
         self.constants.len() - 1
     }

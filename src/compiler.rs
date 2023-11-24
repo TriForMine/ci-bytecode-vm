@@ -1,48 +1,43 @@
-use crate::chunk::{Chunk, OpCode};
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use parking_lot::RwLock;
+use crate::chunk::{Chunk};
 use crate::parser::Parser;
-use crate::scanner::Scanner;
-use crate::token_type::TokenType;
+use crate::value::{Function, FunctionType};
 
-pub struct Compiler<'a> {
-    chunk: &'a mut Chunk,
+pub struct Compiler {
+    chunk: Arc<RwLock<Chunk>>,
+    locals: Arc<RwLock<Vec<Local>>>,
+    scope_depth: Arc<AtomicUsize>,
 }
 
-impl<'a> Compiler<'a> {
-    pub fn new(chunk: &'a mut Chunk) -> Self {
+#[derive(Debug)]
+pub struct Local {
+    pub name: String,
+    pub depth: usize,
+}
+
+impl Compiler {
+    pub fn new(chunk: Arc<RwLock<Chunk>>) -> Self {
+        let mut locals = Vec::new();
+
+        // Add a dummy local to the stack to prevent underflow
+        locals.push(Local {
+            name: String::from(""),
+            depth: 0,
+        });
+
         Compiler {
             chunk,
+            locals: Arc::new(RwLock::new(locals)),
+            scope_depth: Arc::new(AtomicUsize::new(0)),
         }
     }
 
-    fn emit_return(&mut self) {
-        self.chunk.write(OpCode::Return.into(), 123);
-    }
 
-    fn emit_byte(&mut self, byte: u8) {
-        self.chunk.write(byte.into(), 123);
-    }
+    pub fn compile(&mut self, source: &str) -> Option<Arc<RwLock<Function>>> {
+        let mut parser = Parser::new(source.to_string(), self.locals.clone(), self.scope_depth.clone());
 
-    pub fn compile(&mut self, source: &'a str) -> bool {
-        let mut scanner = Scanner::new(source);
-        let mut line = 0;
-
-        loop {
-            let token = scanner.scan_token();
-
-            if token.line != line {
-                print!("{:4} ", token.line);
-                line = token.line;
-            } else {
-                print!("   | ");
-            }
-            print!("{:2?} {:?}\n", token.token_type, token.lexeme);
-
-            if token.token_type == TokenType::Eof {
-                break;
-            }
-        }
-
-        self.emit_return();
-        true
+        parser.parse()
     }
 }

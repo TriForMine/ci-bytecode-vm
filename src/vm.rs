@@ -1,31 +1,47 @@
+use std::collections::HashMap;
+use std::sync::Arc;
 use crate::chunk::{Chunk, OpCode};
 use crate::compiler::Compiler;
+use crate::value::Value;
+use parking_lot::RwLock;
 
-const DEBUG_TRACE_EXECUTION: bool = true;
+pub const DEBUG_PRINT_CODE: bool = true;
+pub const DEBUG_TRACE_EXECUTION: bool = false;
 
+#[derive(PartialEq)]
 pub enum InterpretResult {
     Ok,
     CompileError,
     RuntimeError,
 }
 
-pub struct VM<'a> {
-    chunk: &'a mut Chunk,
+pub struct VM {
+    chunk: Arc<RwLock<Chunk>>,
     ip: usize,
-    stack: Vec<f64>,
+    stack: Vec<Value>,
+    globals: HashMap<String, Value>,
+    frames: Vec<CallFrame>,
 }
 
-impl<'a> VM<'a> {
-    pub fn new(chunk: &'a mut Chunk) -> Self {
+pub struct CallFrame {
+    function: Value,
+    ip: usize,
+    slots: Vec<Value>,
+}
+
+impl VM {
+    pub fn new(chunk: Arc<RwLock<Chunk>>) -> Self {
         VM {
             chunk,
             ip: 0,
             stack: Vec::new(),
+            globals: HashMap::new(),
+            frames: Vec::new(),
         }
     }
 
     fn reset(&mut self) {
-        self.chunk.clear();
+        self.chunk.write().clear();
         self.ip = 0;
         self.stack.clear();
     }
@@ -33,23 +49,51 @@ impl<'a> VM<'a> {
     pub fn interpret(&mut self, source: String) -> InterpretResult {
         self.reset();
 
-        let mut compiler = Compiler::new(self.chunk);
-        if !compiler.compile(&source) {
-            return InterpretResult::CompileError;
-        }
+        let mut compiler = Compiler::new(self.chunk.clone());
 
-        self.run()
+        let function = compiler.compile(&source);
+
+        let res = match function {
+            Some(function) => {
+                self.push(Value::Function(function.clone()));
+                self.frames.push(CallFrame {
+                    function: Value::Function(function),
+                    ip: 0,
+                    slots: Vec::new(),
+                });
+                InterpretResult::Ok
+            }
+            None => InterpretResult::CompileError,
+        };
+
+        if res == InterpretResult::Ok {
+            self.run()
+        } else {
+            res
+        }
     }
 
     fn binary_op(&mut self, op: OpCode) {
         let b = self.pop().unwrap();
         let a = self.pop().unwrap();
-        match op {
-            OpCode::Add => self.push(a + b),
-            OpCode::Subtract => self.push(a - b),
-            OpCode::Multiply => self.push(a * b),
-            OpCode::Divide => self.push(a / b),
-            _ => panic!("Unknown opcode {}", op),
+        match (op, a, b) {
+            (OpCode::Add, Value::Number(a), Value::Number(b)) => self.push(Value::Number(a + b)),
+            (OpCode::Subtract, Value::Number(a), Value::Number(b)) => self.push(Value::Number(a - b)),
+            (OpCode::Multiply, Value::Number(a), Value::Number(b)) => self.push(Value::Number(a * b)),
+            (OpCode::Divide, Value::Number(a), Value::Number(b)) => self.push(Value::Number(a / b)),
+            (OpCode::Equal, a, b) => self.push(Value::Bool(a == b)),
+            (OpCode::Greater, Value::Number(a), Value::Number(b)) => self.push(Value::Bool(a > b)),
+            (OpCode::Less, Value::Number(a), Value::Number(b)) => self.push(Value::Bool(a < b)),
+
+            (OpCode::Add, Value::String(a), Value::String(b)) => {
+                let mut s = a.clone();
+                s.push_str(&b);
+                self.push(Value::String(s));
+            }
+
+            _ => {
+                self.runtime_error("Operands must be numbers");
+            }
         }
     }
 
@@ -63,54 +107,194 @@ impl<'a> VM<'a> {
                     print!("[ {} ]", slot);
                 }
                 println!();
-                self.chunk.disassemble("test chunk");
+
+                let function = self.frames.last().unwrap().function.clone();
+                match function {
+                    Value::Function(ref function) => {
+                        let function = function.read();
+                        let chunk = function.chunk.read();
+                        chunk.disassemble(function.name.as_str());
+                    }
+                    _ => panic!("Expected function"),
+                }
             }
 
             match instruction {
                 OpCode::Return => {
-                    let value = self.pop();
-                    println!("{:?}", value);
                     return InterpretResult::Ok;
-                },
+                }
                 OpCode::Constant => {
                     let constant = self.read_constant();
                     self.push(constant);
-                },
+                }
                 OpCode::Negate => {
                     let value = self.pop().unwrap();
-                    self.push(-value);
-                },
-                OpCode::Add | OpCode::Subtract | OpCode::Multiply | OpCode::Divide => {
-                    self.binary_op(instruction);
-                },
-                _ => {
-                    println!("Unknown opcode {}", instruction);
-                    return InterpretResult::RuntimeError;
+                    match value {
+                        Value::Number(n) => self.push(Value::Number(-n)),
+                        _ => {
+                            self.runtime_error("Operand must be a number");
+                            return InterpretResult::RuntimeError;
+                        }
+                    }
+                }
+                OpCode::Equal => self.binary_op(OpCode::Equal),
+                OpCode::Greater => self.binary_op(OpCode::Greater),
+                OpCode::Less => self.binary_op(OpCode::Less),
+                OpCode::Add => self.binary_op(OpCode::Add),
+                OpCode::Subtract => self.binary_op(OpCode::Subtract),
+                OpCode::Multiply => self.binary_op(OpCode::Multiply),
+                OpCode::Divide => self.binary_op(OpCode::Divide),
+                OpCode::Nil => self.push(Value::Nil),
+                OpCode::True => self.push(Value::Bool(true)),
+                OpCode::False => self.push(Value::Bool(false)),
+                OpCode::Not => {
+                    let value = self.pop().unwrap();
+                    self.push(Value::Bool(value.is_falsey()));
+                }
+                OpCode::Print => {
+                    println!("{}", self.pop().unwrap());
+                }
+                OpCode::Pop => {
+                    self.pop();
+                }
+                OpCode::DefineGlobal => {
+                    let constant = self.read_constant();
+                    let name = constant.to_string();
+                    let value = self.pop().unwrap();
+                    self.globals.insert(name, value);
+                }
+                OpCode::GetGlobal => {
+                    let constant = self.read_constant();
+                    let name = constant.to_string();
+                    let value = self.globals.get(&name).expect(format!("Undefined variable '{}'", name).as_str());
+                    self.push(value.clone());
+                }
+                OpCode::SetGlobal => {
+                    let constant = self.read_constant();
+                    let name = constant.to_string();
+                    if self.globals.contains_key(&name) {
+                        let value = self.pop().unwrap();
+                        self.globals.insert(name, value);
+                    } else {
+                        self.runtime_error(format!("Undefined variable '{}'", name).as_str());
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                OpCode::GetLocal => {
+                    let slot = self.read_byte();
+                    let value = self.frames.last().unwrap().slots[slot as usize].clone();
+                    self.push(value);
+                }
+                OpCode::SetLocal => {
+                    let slot = self.read_byte();
+                    let value = self.peek().unwrap().clone();
+                    self.frames.last_mut().unwrap().slots[slot as usize] = value;
+                }
+                OpCode::JumpIfFalse => {
+                    let offset = self.read_short();
+                    if self.peek().unwrap().is_falsey() {
+                        self.frames.last_mut().unwrap().ip += offset as usize;
+                    }
+                }
+                OpCode::JumpIfTrue => {
+                    let offset = self.read_short();
+                    if !self.peek().unwrap().is_falsey() {
+                        self.frames.last_mut().unwrap().ip += offset as usize;
+                    }
+                }
+                OpCode::Jump => {
+                    let offset = self.read_short();
+                    self.frames.last_mut().unwrap().ip += offset as usize;
+                }
+                OpCode::Loop => {
+                    let offset = self.read_short();
+                    self.frames.last_mut().unwrap().ip -= offset as usize;
+                }
+                OpCode::Duplicate => {
+                    if self.stack.len() > 0 {
+                        let value = self.peek().unwrap().clone();
+                        self.push(value);
+                    } else {
+                        self.runtime_error("Stack is empty");
+                        return InterpretResult::RuntimeError;
+                    }
                 }
             }
         }
     }
 
+    fn runtime_error(&self, message: &str) {
+        eprintln!("{}", message);
+        let frame = self.frames.last().unwrap();
+        let function = frame.function.clone();
+        match function {
+            Value::Function(ref function) => {
+                let function = function.read();
+                let chunk = function.chunk.read();
+                let instruction = frame.ip - 1;
+                let line = chunk.lines[instruction];
+                eprintln!("[line {}] in script", line);
+            }
+            _ => panic!("Expected function"),
+        }
+    }
+
     #[inline]
     fn read_byte(&mut self) -> u8 {
-        let byte = self.chunk.code[self.ip];
-        self.ip += 1;
-        byte
+        let frame = self.frames.last_mut().unwrap();
+        match frame.function {
+            Value::Function(ref function) => {
+                let function = function.read();
+                let byte = function.chunk.read().code[frame.ip];
+                frame.ip += 1;
+                byte
+            }
+            _ => panic!("Expected function"),
+        }
     }
 
     #[inline]
-    fn read_constant(&mut self) -> f64 {
-        let constant = self.read_byte();
-        self.chunk.constants[constant as usize]
+    fn read_constant(&mut self) -> Value {
+        let frame = self.frames.last_mut().unwrap();
+        match frame.function {
+            Value::Function(ref function) => {
+                let function = function.read();
+                let constant = function.chunk.read().code[frame.ip];
+                frame.ip += 1;
+                let chunk = function.chunk.read();
+                chunk.constants[constant as usize].clone()
+            }
+            _ => panic!("Expected function"),
+        }
     }
 
     #[inline]
-    fn push(&mut self, value: f64) {
+    fn read_short(&mut self) -> u16 {
+        let frame = self.frames.last_mut().unwrap();
+        match frame.function {
+            Value::Function(ref function) => {
+                let function = function.read();
+                let byte1 = function.chunk.read().code[frame.ip];
+                let byte2 = function.chunk.read().code[frame.ip + 1];
+                frame.ip += 2;
+                (byte1 as u16) << 8 | (byte2 as u16)
+            }
+            _ => panic!("Expected function"),
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, value: Value) {
         self.stack.push(value);
     }
 
     #[inline]
-    fn pop(&mut self) -> Option<f64> {
+    fn pop(&mut self) -> Option<Value> {
         self.stack.pop()
+    }
+
+    #[inline]
+    fn peek(&self) -> Option<&Value> {
+        self.stack.last()
     }
 }
