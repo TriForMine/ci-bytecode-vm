@@ -35,6 +35,9 @@ pub enum OpCode {
     GetUpvalue,
     SetUpvalue,
     CloseUpvalue,
+    Class,
+    GetProperty,
+    SetProperty,
 }
 
 impl From<u8> for OpCode {
@@ -71,6 +74,9 @@ impl From<u8> for OpCode {
             0x1D => OpCode::GetUpvalue,
             0x1E => OpCode::SetUpvalue,
             0x1F => OpCode::CloseUpvalue,
+            0x20 => OpCode::Class,
+            0x21 => OpCode::GetProperty,
+            0x22 => OpCode::SetProperty,
             _ => panic!("Unknown OpCode: {}", byte),
         }
     }
@@ -110,6 +116,9 @@ impl From<OpCode> for u8 {
             OpCode::GetUpvalue => 0x1D,
             OpCode::SetUpvalue => 0x1E,
             OpCode::CloseUpvalue => 0x1F,
+            OpCode::Class => 0x20,
+            OpCode::GetProperty => 0x21,
+            OpCode::SetProperty => 0x22,
         }
     }
 }
@@ -148,6 +157,9 @@ impl Display for OpCode {
             OpCode::GetUpvalue => write!(f, "GET_UPVALUE"),
             OpCode::SetUpvalue => write!(f, "SET_UPVALUE"),
             OpCode::CloseUpvalue => write!(f, "CLOSE_UPVALUE"),
+            OpCode::Class => write!(f, "CLASS"),
+            OpCode::GetProperty => write!(f, "GET_PROPERTY"),
+            OpCode::SetProperty => write!(f, "SET_PROPERTY"),
         }
     }
 }

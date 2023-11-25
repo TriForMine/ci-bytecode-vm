@@ -413,6 +413,52 @@ impl VM {
                         return InterpretResult::RuntimeError;
                     }
                 }
+                OpCode::Class => {
+                    let name = self.read_constant();
+                    self.push(Value::Class(Rc::new(RwLock::new(value::Class::new(
+                        name.to_string(),
+                    )))));
+                }
+                OpCode::GetProperty => {
+                    let name = self.read_constant();
+                    let instance = self.pop().unwrap();
+                    match instance {
+                        Value::Instance(instance) => {
+                            if let Some(value) =
+                                instance.read().fields.read().get(&name.to_string())
+                            {
+                                self.push(value.clone());
+                            } else {
+                                self.runtime_error(
+                                    format!("Undefined property '{}'", name).as_str(),
+                                );
+                                return InterpretResult::RuntimeError;
+                            }
+                        }
+                        _ => {
+                            self.runtime_error("Only instances have properties");
+                            return InterpretResult::RuntimeError;
+                        }
+                    }
+                }
+                OpCode::SetProperty => {
+                    let name = self.read_constant();
+                    let instance = self.peek(1).unwrap().clone();
+                    match instance {
+                        Value::Instance(instance) => {
+                            let value = self.peek(0).unwrap().clone();
+                            instance
+                                .write()
+                                .fields
+                                .write()
+                                .insert(name.to_string(), value);
+                        }
+                        _ => {
+                            self.runtime_error("Only instances have fields");
+                            return InterpretResult::RuntimeError;
+                        }
+                    }
+                }
             }
         }
     }
@@ -454,6 +500,15 @@ impl VM {
         match callee {
             Value::Closure(closure) => {
                 self.call(closure, arg_count);
+                true
+            }
+            Value::Class(class) => {
+                self.stack.pop();
+                let instance =
+                    Value::Instance(Rc::new(RwLock::new(value::Instance::new(class.clone()))));
+
+                self.push(instance);
+
                 true
             }
             Value::NativeFunction(function) => {

@@ -1,5 +1,6 @@
 use crate::chunk::Chunk;
 use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 #[derive(Clone, Debug)]
@@ -14,11 +15,39 @@ pub enum Value {
     NativeFunction(Rc<RwLock<NativeFunction>>),
     RunTimeError(String),
     Class(Rc<RwLock<Class>>),
+    Instance(Rc<RwLock<Instance>>),
+}
+
+#[derive(Clone, Debug)]
+pub struct Instance {
+    pub class: Rc<RwLock<Class>>,
+    pub fields: Rc<RwLock<HashMap<String, Value>>>,
+}
+
+impl Instance {
+    pub fn new(class: Rc<RwLock<Class>>) -> Self {
+        Instance {
+            class,
+            fields: Rc::new(RwLock::new(HashMap::new())),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct Class {
     pub name: String,
+}
+
+impl Class {
+    pub fn new(name: String) -> Self {
+        Class { name }
+    }
+}
+
+impl PartialEq for Class {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -181,6 +210,9 @@ impl std::fmt::Display for Value {
             Value::NativeFunction(func) => write!(f, "<native fn {}>", func.read().name),
             Value::RunTimeError(s) => write!(f, "{}", s),
             Value::Class(class) => write!(f, "<class {}>", class.read().name),
+            Value::Instance(instance) => {
+                write!(f, "<instance {}>", instance.read().class.read().name)
+            }
         }
     }
 }

@@ -170,7 +170,7 @@ impl Scanner {
                     match self.source.chars().nth(self.start + 1).unwrap() {
                         'a' => self.check_keyword(2, 2, "se", TokenType::Case),
                         'o' => self.check_keyword(2, 6, "ntinue", TokenType::Continue),
-                        'l' => self.check_keyword(2, 2, "as", TokenType::Class),
+                        'l' => self.check_keyword(2, 3, "ass", TokenType::Class),
                         _ => TokenType::Identifier,
                     }
                 } else {

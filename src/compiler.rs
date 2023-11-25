@@ -215,6 +215,7 @@ impl Compiler {
 
     fn declaration(&self) {
         if self.match_token(TokenType::Class) {
+            self.class_declaration();
         } else if self.match_token(TokenType::Fun) {
             self.fun_declaration();
         } else if self.match_token(TokenType::Var) {
@@ -226,6 +227,19 @@ impl Compiler {
         if self.error_state.read().panic_mode {
             self.synchronize();
         }
+    }
+
+    fn class_declaration(&self) {
+        self.consume(TokenType::Identifier, "Expect class name.");
+        let name_constant = self.identifier_constant(self.scanner_state.read().previous.clone());
+
+        self.declare_variable();
+
+        self.emit_bytes(OpCode::Class.into(), name_constant);
+        self.define_variable(name_constant);
+
+        self.consume(TokenType::LeftBrace, "Expect '{' before class body.");
+        self.consume(TokenType::RightBrace, "Expect '}' after class body.");
     }
 
     fn fun_declaration(&self) {
@@ -261,15 +275,18 @@ impl Compiler {
         compiler.consume(TokenType::LeftBrace, "Expect '{' before function body.");
         compiler.block();
 
-        let function = compiler.end_compiler().unwrap();
+        let function = match compiler.end_compiler() {
+            Some(function) => function,
+            None => return,
+        };
         self.emit_bytes(
             OpCode::Closure.into(),
             self.make_constant(Value::Function(function)),
         );
 
-        for upvalue in compiler.upvalues.read().iter() {
-            self.emit_byte(if upvalue.is_local { 1 } else { 0 });
-            self.emit_byte(upvalue.index);
+        for up_value in compiler.upvalues.read().iter() {
+            self.emit_byte(if up_value.is_local { 1 } else { 0 });
+            self.emit_byte(up_value.index);
         }
     }
 
@@ -738,6 +755,18 @@ impl Compiler {
     pub fn call(&self, _can_assign: bool) {
         let arg_count = self.argument_list();
         self.emit_bytes(OpCode::Call.into(), arg_count);
+    }
+
+    pub fn dot(&self, can_assign: bool) {
+        self.consume(TokenType::Identifier, "Expect property name after '.'.");
+        let name = self.identifier_constant(self.scanner_state.read().previous.clone());
+
+        if can_assign && self.match_token(TokenType::Equal) {
+            self.expression();
+            self.emit_bytes(OpCode::SetProperty.into(), name);
+        } else {
+            self.emit_bytes(OpCode::GetProperty.into(), name);
+        }
     }
 
     fn argument_list(&self) -> u8 {

@@ -56,8 +56,8 @@ lazy_static! {
             TokenType::Dot,
             ParseRule {
                 prefix: None,
-                infix: None,
-                precedence: Precedence::None,
+                infix: Some(Box::new(Compiler::dot)),
+                precedence: Precedence::Call,
             },
         );
         m.insert(

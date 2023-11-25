@@ -96,6 +96,9 @@ pub fn disassemble(chunk: &Chunk, name: &str) {
             OpCode::GetUpvalue => byte_instruction(chunk, "OP_GET_UPVALUE", offset),
             OpCode::SetUpvalue => byte_instruction(chunk, "OP_SET_UPVALUE", offset),
             OpCode::CloseUpvalue => simple_instruction("OP_CLOSE_UPVALUE", offset),
+            OpCode::Class => constant_instruction(chunk, "OP_CLASS", offset),
+            OpCode::GetProperty => constant_instruction(chunk, "OP_GET_PROPERTY", offset),
+            OpCode::SetProperty => constant_instruction(chunk, "OP_SET_PROPERTY", offset),
         }
     }
 
