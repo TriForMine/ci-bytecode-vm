@@ -11,6 +11,12 @@ pub enum Value {
     Function(Arc<RwLock<Function>>),
 }
 
+impl Default for Value {
+    fn default() -> Self {
+        Value::Nil
+    }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {

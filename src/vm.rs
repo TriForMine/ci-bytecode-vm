@@ -9,6 +9,10 @@ use crate::scanner::Scanner;
 pub const DEBUG_PRINT_CODE: bool = true;
 pub const DEBUG_TRACE_EXECUTION: bool = false;
 
+pub const FRAMES_MAX: usize = 64;
+pub const STACK_MAX: usize = FRAMES_MAX * 256;
+
+
 #[derive(PartialEq)]
 pub enum InterpretResult {
     Ok,
@@ -17,13 +21,12 @@ pub enum InterpretResult {
 }
 
 pub struct VM {
-    chunk: Arc<RwLock<Chunk>>,
-    ip: usize,
-    stack: Vec<Value>,
     globals: HashMap<String, Value>,
     frames: Vec<CallFrame>,
+    stack: Vec<Value>,
 }
 
+#[derive(Clone, Debug)]
 pub struct CallFrame {
     function: Value,
     ip: usize,
@@ -31,24 +34,20 @@ pub struct CallFrame {
 }
 
 impl VM {
-    pub fn new(chunk: Arc<RwLock<Chunk>>) -> Self {
+    pub fn new() -> Self {
         VM {
-            chunk,
-            ip: 0,
-            stack: Vec::new(),
             globals: HashMap::new(),
-            frames: Vec::new(),
+            frames: Vec::with_capacity(FRAMES_MAX),
+            stack: Vec::with_capacity(STACK_MAX),
         }
     }
 
-    fn reset(&mut self) {
-        self.chunk.write().clear();
-        self.ip = 0;
+    fn reset_stack(&mut self) {
         self.stack.clear();
     }
 
     pub fn interpret(&mut self, source: String) -> InterpretResult {
-        self.reset();
+        self.reset_stack();
 
         let scanner = Arc::new(RwLock::new(Scanner::new(source)));
         let mut compiler = Compiler::new(FunctionType::Script, scanner);
@@ -59,9 +58,9 @@ impl VM {
             Some(function) => {
                 self.push(Value::Function(function.clone()));
                 self.frames.push(CallFrame {
-                    function: Value::Function(function),
+                    function: Value::Function(function.clone()),
                     ip: 0,
-                    slots: Vec::new(),
+                    slots: Vec::with_capacity(function.read().arity),
                 });
                 InterpretResult::Ok
             }
@@ -78,6 +77,7 @@ impl VM {
     fn binary_op(&mut self, op: OpCode) {
         let b = self.pop().unwrap();
         let a = self.pop().unwrap();
+
         match (op, a, b) {
             (OpCode::Add, Value::Number(a), Value::Number(b)) => self.push(Value::Number(a + b)),
             (OpCode::Subtract, Value::Number(a), Value::Number(b)) => self.push(Value::Number(a - b)),
@@ -86,13 +86,10 @@ impl VM {
             (OpCode::Equal, a, b) => self.push(Value::Bool(a == b)),
             (OpCode::Greater, Value::Number(a), Value::Number(b)) => self.push(Value::Bool(a > b)),
             (OpCode::Less, Value::Number(a), Value::Number(b)) => self.push(Value::Bool(a < b)),
-
             (OpCode::Add, Value::String(a), Value::String(b)) => {
-                let mut s = a.clone();
-                s.push_str(&b);
+                let s = a + &b;
                 self.push(Value::String(s));
             }
-
             _ => {
                 self.runtime_error("Operands must be numbers");
             }
@@ -104,13 +101,14 @@ impl VM {
             let instruction: OpCode = OpCode::from(self.read_byte());
 
             if DEBUG_TRACE_EXECUTION {
+                let frame = self.frames.last().unwrap();
                 print!("          ");
-                for slot in &self.stack {
+                for slot in &frame.slots {
                     print!("[ {} ]", slot);
                 }
                 println!();
 
-                let function = self.frames.last().unwrap().function.clone();
+                let function = frame.function.clone();
                 match function {
                     Value::Function(ref function) => {
                         let function = function.read();
@@ -123,12 +121,25 @@ impl VM {
 
             match instruction {
                 OpCode::Return => {
-                    let value = self.pop().unwrap();
-                    self.frames.pop();
-                    if self.frames.len() == 0 {
-                        return InterpretResult::Ok;
+                   let mut result = self.pop();
+
+                    match result {
+                        Some(result) => {
+                            let mut frame = self.frames.pop().unwrap();
+                            if self.frames.len() == 0 {
+                                self.pop();
+                                return InterpretResult::Ok;
+                            }
+
+                            // Add frame stack on top of current stack
+                            self.stack.append(&mut frame.slots);
+                            self.push(result);
+                        }
+                        None => {
+                            self.runtime_error("Stack underflow");
+                            return InterpretResult::RuntimeError;
+                        }
                     }
-                    self.push(value);
                 }
                 OpCode::Constant => {
                     let constant = self.read_constant();
@@ -173,8 +184,15 @@ impl VM {
                 OpCode::GetGlobal => {
                     let constant = self.read_constant();
                     let name = constant.to_string();
-                    let value = self.globals.get(&name).expect(format!("Undefined variable '{}'", name).as_str());
-                    self.push(value.clone());
+                    let value = self.globals.get(&name);
+
+                    match value {
+                        Some(value) => self.push(value.clone()),
+                        None => {
+                            self.runtime_error(format!("Undefined variable '{}'", name).as_str());
+                            return InterpretResult::RuntimeError;
+                        }
+                    }
                 }
                 OpCode::SetGlobal => {
                     let constant = self.read_constant();
@@ -190,14 +208,10 @@ impl VM {
                 OpCode::GetLocal => {
                     let slot = self.read_byte();
 
-                    println!("Locals {:?}", self.frames.last().unwrap().slots);
-                    println!("Gettting local slot {}", slot);
-
                     let value = self.frames.last().unwrap().slots[slot as usize].clone();
                     self.push(value);
                 }
                 OpCode::SetLocal => {
-                    println!("Set Locals {:?}", self.frames.last().unwrap().slots);
                     let slot = self.read_byte();
                     let value = self.peek(0).unwrap().clone();
                     self.frames.last_mut().unwrap().slots[slot as usize] = value;
@@ -223,11 +237,10 @@ impl VM {
                     self.frames.last_mut().unwrap().ip -= offset as usize;
                 }
                 OpCode::Duplicate => {
-                    if self.stack.len() > 0 {
-                        let value = self.peek(0).unwrap().clone();
-                        self.push(value);
+                    if let Some(value) = self.peek(0) {
+                        self.push(value.clone());
                     } else {
-                        self.runtime_error("Stack is empty");
+                        self.runtime_error("Stack underflow");
                         return InterpretResult::RuntimeError;
                     }
                 }
@@ -262,7 +275,8 @@ impl VM {
         self.frames.push(CallFrame {
             function: Value::Function(function.clone()),
             ip: 0,
-            slots: Vec::new(),
+            // Should only have arg_count + 1 slots
+            slots: self.stack.split_off(self.stack.len() - (arg_count as usize)),
         });
     }
 
@@ -281,20 +295,41 @@ impl VM {
             }
         }
 
-        self.stack.clear();
+        let mut frame = self.frames.last_mut().unwrap();
+
+        self.stack.truncate(frame.slots.len());
+
+        if self.frames.len() == 1 {
+            let frame = self.frames.last_mut().unwrap();
+            match frame.function {
+                Value::Function(ref function) => {
+                    frame.ip = function.read().chunk.read().code.len() - 1;
+                }
+                _ => panic!("Expected function"),
+            }
+        } else {
+            self.frames.pop();
+            frame = self.frames.last_mut().unwrap();
+            frame.ip += 1;
+        }
     }
 
     #[inline]
     fn read_byte(&mut self) -> u8 {
-        let frame = self.frames.last_mut().unwrap();
-        match frame.function {
-            Value::Function(ref function) => {
-                let function = function.read();
-                let byte = function.chunk.read().code[frame.ip];
-                frame.ip += 1;
-                byte
+        let frame = self.frames.last_mut();
+        match frame {
+            Some(frame) => {
+                match frame.function {
+                    Value::Function(ref function) => {
+                        let function = function.read();
+                        let byte = function.chunk.read().code[frame.ip];
+                        frame.ip += 1;
+                        byte
+                    }
+                    _ => panic!("Expected function"),
+                }
             }
-            _ => panic!("Expected function"),
+            None => panic!("Expected frame"),
         }
     }
 
@@ -339,7 +374,12 @@ impl VM {
     }
 
     #[inline]
-    fn peek(&self, distance: usize) -> Option<&Value> {
-        self.stack.get(self.stack.len() - 1 - distance)
+    fn peek(&self, distance: usize) -> Option<Value> {
+        let len = self.stack.len();
+        if len > distance {
+            Some(self.stack[len - distance - 1].clone())
+        } else {
+            None
+        }
     }
 }

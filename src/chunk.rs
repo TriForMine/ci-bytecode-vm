@@ -2,6 +2,7 @@ use std::fmt::Display;
 use crate::debug::Dissassembler;
 use crate::value::Value;
 
+#[derive(Debug)]
 pub enum OpCode {
     Return = 0x01,
     Negate,

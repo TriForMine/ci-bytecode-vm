@@ -43,8 +43,7 @@ fn run_file(path: &str, vm: &mut vm::VM) {
 fn main() {
     let args = std::env::args().collect::<Vec<String>>();
 
-    let chunk = Arc::new(RwLock::new(Chunk::new()));
-    let mut vm = vm::VM::new(chunk);
+    let mut vm = vm::VM::new();
 
     if args.len() == 1 {
         repl(&mut vm);

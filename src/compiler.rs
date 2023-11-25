@@ -104,11 +104,10 @@ impl Compiler {
         self.emit_return();
 
         if !self.error_state.read().had_error && DEBUG_PRINT_CODE {
-            self.get_chunk().read().disassemble("code");
+            self.get_chunk().read().disassemble(&self.function.read().name);
         }
 
         if !self.error_state.read().had_error {
-            self.get_chunk().read().disassemble(&self.function.read().name);
             Some(self.function.clone())
         } else {
             None
@@ -569,7 +568,6 @@ impl Compiler {
 
         if can_assign && self.match_token(TokenType::Equal) {
             self.expression();
-            println!("{} {}", set_op, arg);
             self.emit_bytes(set_op.into(), arg);
         } else {
             self.emit_bytes(get_op.into(), arg);
