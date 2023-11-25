@@ -1,13 +1,13 @@
 use std::io::Write;
 
 mod chunk;
+mod compiler;
 mod debug;
-mod vm;
+mod parser_rules;
 mod scanner;
 mod token_type;
-mod compiler;
-mod parser_rules;
 mod value;
+mod vm;
 
 fn repl(vm: &mut vm::VM) {
     loop {
@@ -15,7 +15,9 @@ fn repl(vm: &mut vm::VM) {
         std::io::stdout().flush().expect("Failed to flush stdout");
 
         let mut line = String::new();
-        std::io::stdin().read_line(&mut line).expect("Failed to read line");
+        std::io::stdin()
+            .read_line(&mut line)
+            .expect("Failed to read line");
 
         vm.interpret(line);
     }

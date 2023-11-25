@@ -145,8 +145,16 @@ impl Scanner {
         self.make_token(self.identifier_type())
     }
 
-    fn check_keyword(&self, start: usize, length: usize, rest: &str, token_type: TokenType) -> TokenType {
-        if self.current - self.start == start + length && &self.source[self.start + start..self.start + start + length] == rest {
+    fn check_keyword(
+        &self,
+        start: usize,
+        length: usize,
+        rest: &str,
+        token_type: TokenType,
+    ) -> TokenType {
+        if self.current - self.start == start + length
+            && &self.source[self.start + start..self.start + start + length] == rest
+        {
             return token_type;
         }
 
@@ -168,7 +176,7 @@ impl Scanner {
                 } else {
                     TokenType::Identifier
                 }
-            },
+            }
             'd' => self.check_keyword(1, 6, "efault", TokenType::Default),
             'e' => self.check_keyword(1, 3, "lse", TokenType::Else),
             'f' => {

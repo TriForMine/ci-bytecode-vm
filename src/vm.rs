@@ -1,19 +1,18 @@
-use std::collections::HashMap;
-use std::io::{Read};
-use std::rc::Rc;
-use crate::chunk::{OpCode};
+use crate::chunk::OpCode;
 use crate::compiler::Compiler;
-use crate::value::{FunctionType, Value};
-use parking_lot::RwLock;
 use crate::scanner::Scanner;
 use crate::value;
+use crate::value::{FunctionType, Value};
+use parking_lot::RwLock;
+use std::collections::HashMap;
+use std::io::Read;
+use std::rc::Rc;
 
 pub const DEBUG_PRINT_CODE: bool = true;
 pub const DEBUG_TRACE_EXECUTION: bool = false;
 
 pub const FRAMES_MAX: usize = 64;
 pub const STACK_MAX: usize = FRAMES_MAX * 256;
-
 
 #[derive(PartialEq)]
 pub enum InterpretResult {
@@ -36,10 +35,12 @@ pub struct CallFrame {
 }
 
 pub fn clock_native(_: Vec<Value>) -> Value {
-    Value::Float(std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64())
+    Value::Float(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64(),
+    )
 }
 
 pub fn sqrt_native(args: Vec<Value>) -> Value {
@@ -52,7 +53,9 @@ pub fn sqrt_native(args: Vec<Value>) -> Value {
 
 pub fn input_native(_: Vec<Value>) -> Value {
     let mut input = String::new();
-    std::io::stdin().read_line(&mut input).expect("Failed to read line");
+    std::io::stdin()
+        .read_line(&mut input)
+        .expect("Failed to read line");
     Value::String(input.trim().to_string())
 }
 
@@ -62,17 +65,16 @@ pub fn throw_native(args: Vec<Value>) -> Value {
 
 pub fn open_file_native(args: Vec<Value>) -> Value {
     match &args[0] {
-        Value::String(s) => {
-            match std::fs::File::open(s.clone()) {
-                Ok(file) => {
-                    let mut file = std::io::BufReader::new(file);
-                    let mut contents = String::new();
-                    file.read_to_string(&mut contents).expect("Failed to read file");
-                    Value::String(contents)
-                },
-                Err(_) => Value::RunTimeError(format!("Failed to open file '{}'", s)),
+        Value::String(s) => match std::fs::File::open(s.clone()) {
+            Ok(file) => {
+                let mut file = std::io::BufReader::new(file);
+                let mut contents = String::new();
+                file.read_to_string(&mut contents)
+                    .expect("Failed to read file");
+                Value::String(contents)
             }
-        }
+            Err(_) => Value::RunTimeError(format!("Failed to open file '{}'", s)),
+        },
         _ => Value::RunTimeError("Expected string".to_string()),
     }
 }
@@ -150,16 +152,34 @@ impl VM {
             (OpCode::Greater, Value::Float(a), Value::Float(b)) => self.push(Value::Bool(a > b)),
             (OpCode::Less, Value::Float(a), Value::Float(b)) => self.push(Value::Bool(a < b)),
             (OpCode::Add, Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 + b)),
-            (OpCode::Subtract, Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 - b)),
-            (OpCode::Multiply, Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 * b)),
-            (OpCode::Divide, Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 / b)),
-            (OpCode::Greater, Value::Int(a), Value::Float(b)) => self.push(Value::Bool(a as f64 > b)),
-            (OpCode::Less, Value::Int(a), Value::Float(b)) => self.push(Value::Bool((a as f64) < b)),
+            (OpCode::Subtract, Value::Int(a), Value::Float(b)) => {
+                self.push(Value::Float(a as f64 - b))
+            }
+            (OpCode::Multiply, Value::Int(a), Value::Float(b)) => {
+                self.push(Value::Float(a as f64 * b))
+            }
+            (OpCode::Divide, Value::Int(a), Value::Float(b)) => {
+                self.push(Value::Float(a as f64 / b))
+            }
+            (OpCode::Greater, Value::Int(a), Value::Float(b)) => {
+                self.push(Value::Bool(a as f64 > b))
+            }
+            (OpCode::Less, Value::Int(a), Value::Float(b)) => {
+                self.push(Value::Bool((a as f64) < b))
+            }
             (OpCode::Add, Value::Float(a), Value::Int(b)) => self.push(Value::Float(a + b as f64)),
-            (OpCode::Subtract, Value::Float(a), Value::Int(b)) => self.push(Value::Float(a - b as f64)),
-            (OpCode::Multiply, Value::Float(a), Value::Int(b)) => self.push(Value::Float(a * b as f64)),
-            (OpCode::Divide, Value::Float(a), Value::Int(b)) => self.push(Value::Float(a / b as f64)),
-            (OpCode::Greater, Value::Float(a), Value::Int(b)) => self.push(Value::Bool(a > b as f64)),
+            (OpCode::Subtract, Value::Float(a), Value::Int(b)) => {
+                self.push(Value::Float(a - b as f64))
+            }
+            (OpCode::Multiply, Value::Float(a), Value::Int(b)) => {
+                self.push(Value::Float(a * b as f64))
+            }
+            (OpCode::Divide, Value::Float(a), Value::Int(b)) => {
+                self.push(Value::Float(a / b as f64))
+            }
+            (OpCode::Greater, Value::Float(a), Value::Int(b)) => {
+                self.push(Value::Bool(a > b as f64))
+            }
             (OpCode::Less, Value::Float(a), Value::Int(b)) => self.push(Value::Bool(a < b as f64)),
             (OpCode::Add, Value::Int(a), Value::Int(b)) => self.push(Value::Int(a + b)),
             (OpCode::Subtract, Value::Int(a), Value::Int(b)) => self.push(Value::Int(a - b)),
@@ -175,7 +195,13 @@ impl VM {
             }
 
             (o, a, b) => {
-                self.runtime_error(format!("Operands must be two numbers or two strings. Got {:?} {:?} {:?}", o, a, b).as_str());
+                self.runtime_error(
+                    format!(
+                        "Operands must be two numbers or two strings. Got {:?} {:?} {:?}",
+                        o, a, b
+                    )
+                    .as_str(),
+                );
             }
         }
     }
@@ -192,7 +218,14 @@ impl VM {
                 }
                 println!();
 
-                frame.closure.read().function.read().chunk.read().disassemble( frame.closure.read().function.clone().read().name.as_str());
+                frame
+                    .closure
+                    .read()
+                    .function
+                    .read()
+                    .chunk
+                    .read()
+                    .disassemble(frame.closure.read().function.clone().read().name.as_str());
             }
 
             match instruction {
@@ -208,9 +241,15 @@ impl VM {
                         let is_local = self.read_byte() == 1;
                         let index = self.read_byte();
                         if is_local {
-                            closure.up_values.write().push(self.capture_up_value(self.frames.last().unwrap().slots[index as usize].clone()));
+                            closure.up_values.write().push(self.capture_up_value(
+                                self.frames.last().unwrap().slots[index as usize].clone(),
+                            ));
                         } else {
-                            closure.up_values.write().push(self.frames.last().unwrap().closure.read().up_values.read()[index as usize].clone());
+                            closure.up_values.write().push(
+                                self.frames.last().unwrap().closure.read().up_values.read()
+                                    [index as usize]
+                                    .clone(),
+                            );
                         }
                     }
 
@@ -228,7 +267,9 @@ impl VM {
                             }
 
                             let parent_frame = self.frames.last_mut().unwrap();
-                            parent_frame.slots.truncate(parent_frame.slots.len() - frame.slots.len());
+                            parent_frame
+                                .slots
+                                .truncate(parent_frame.slots.len() - frame.slots.len());
                             self.push(result);
                         }
                         None => {
@@ -314,18 +355,30 @@ impl VM {
                 }
                 OpCode::GetUpvalue => {
                     let slot = self.read_byte();
-                    let value = self.frames.last().unwrap().closure.read().up_values.read()[slot as usize].read().location.clone();
+                    let value = self.frames.last().unwrap().closure.read().up_values.read()
+                        [slot as usize]
+                        .read()
+                        .location
+                        .clone();
                     self.push(value);
                 }
                 OpCode::SetUpvalue => {
                     let slot = self.read_byte();
                     let value = self.peek(0).unwrap().clone();
-                    self.frames.last_mut().unwrap().closure.read().up_values.read()[slot as usize].write().location = value;
+                    self.frames
+                        .last_mut()
+                        .unwrap()
+                        .closure
+                        .read()
+                        .up_values
+                        .read()[slot as usize]
+                        .write()
+                        .location = value;
                 }
                 OpCode::CloseUpvalue => {
                     self.close_up_values();
                     self.pop();
-                },
+                }
                 OpCode::JumpIfFalse => {
                     let offset = self.read_short();
                     if self.peek(0).unwrap().is_falsely() {
@@ -386,7 +439,12 @@ impl VM {
         }
 
         let up_value = Rc::new(RwLock::new(value::UpValueObject::new(Value::Nil)));
-        last_frame.closure.read().up_values.write().push(up_value.clone());
+        last_frame
+            .closure
+            .read()
+            .up_values
+            .write()
+            .push(up_value.clone());
         up_value.write().location = local;
         up_value.write().closed = false;
         up_value
@@ -401,12 +459,20 @@ impl VM {
             Value::NativeFunction(function) => {
                 let function = function.read();
                 if arg_count != function.arity as u8 {
-                    self.runtime_error(format!("Expected {} arguments but got {}", function.arity, arg_count).as_str());
+                    self.runtime_error(
+                        format!(
+                            "Expected {} arguments but got {}",
+                            function.arity, arg_count
+                        )
+                        .as_str(),
+                    );
                     return false;
                 }
 
                 let frame = self.frames.last_mut().unwrap();
-                let args = frame.slots.split_off(frame.slots.len() - arg_count as usize);
+                let args = frame
+                    .slots
+                    .split_off(frame.slots.len() - arg_count as usize);
 
                 let result = (function.function)(args);
 
@@ -432,12 +498,21 @@ impl VM {
 
     fn call(&mut self, closure: Rc<RwLock<value::Closure>>, arg_count: u8) {
         if arg_count != closure.read().function.read().arity as u8 {
-            self.runtime_error(format!("Expected {} arguments but got {}", closure.read().function.read().arity, arg_count).as_str());
+            self.runtime_error(
+                format!(
+                    "Expected {} arguments but got {}",
+                    closure.read().function.read().arity,
+                    arg_count
+                )
+                .as_str(),
+            );
             return;
         }
 
         let frame = self.frames.last_mut().unwrap();
-        let slots = frame.slots.split_off(frame.slots.len() - arg_count as usize);
+        let slots = frame
+            .slots
+            .split_off(frame.slots.len() - arg_count as usize);
 
         self.frames.push(CallFrame {
             closure,
@@ -477,11 +552,22 @@ impl VM {
         }
     }
 
-    fn define_native(&mut self, name: String, function: Box<fn(Vec<Value>) -> Value>, arity: usize) {
+    fn define_native(
+        &mut self,
+        name: String,
+        function: Box<fn(Vec<Value>) -> Value>,
+        arity: usize,
+    ) {
         self.stack.push(Value::String(name.clone()));
-        let native_function = Rc::new(RwLock::new(value::NativeFunction::new(name.clone(), arity, function)));
-        self.stack.push(Value::NativeFunction(native_function.clone()));
-        self.globals.insert(name.clone(), Value::NativeFunction(native_function));
+        let native_function = Rc::new(RwLock::new(value::NativeFunction::new(
+            name.clone(),
+            arity,
+            function,
+        )));
+        self.stack
+            .push(Value::NativeFunction(native_function.clone()));
+        self.globals
+            .insert(name.clone(), Value::NativeFunction(native_function));
         self.stack.pop();
         self.stack.pop();
     }
@@ -508,7 +594,8 @@ impl VM {
             Some(frame) => {
                 let constant = frame.closure.read().function.read().chunk.read().code[frame.ip];
                 frame.ip += 1;
-                frame.closure.read().function.read().chunk.read().constants[constant as usize].clone()
+                frame.closure.read().function.read().chunk.read().constants[constant as usize]
+                    .clone()
             }
             None => panic!("Expected frame"),
         }

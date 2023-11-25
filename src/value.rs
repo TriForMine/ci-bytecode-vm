@@ -1,6 +1,6 @@
-use std::rc::Rc;
 use crate::chunk::Chunk;
 use parking_lot::RwLock;
+use std::rc::Rc;
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -13,6 +13,12 @@ pub enum Value {
     Closure(Rc<RwLock<Closure>>),
     NativeFunction(Rc<RwLock<NativeFunction>>),
     RunTimeError(String),
+    Class(Rc<RwLock<Class>>),
+}
+
+#[derive(Clone, Debug)]
+pub struct Class {
+    pub name: String,
 }
 
 #[derive(Clone, Debug)]
@@ -29,7 +35,10 @@ impl PartialEq for UpValueObject {
 
 impl UpValueObject {
     pub fn new(location: Value) -> Self {
-        UpValueObject { location, closed: false }
+        UpValueObject {
+            location,
+            closed: false,
+        }
     }
 }
 
@@ -171,6 +180,7 @@ impl std::fmt::Display for Value {
             Value::Closure(closure) => write!(f, "<fn {}>", closure.read().function.read().name),
             Value::NativeFunction(func) => write!(f, "<native fn {}>", func.read().name),
             Value::RunTimeError(s) => write!(f, "{}", s),
+            Value::Class(class) => write!(f, "<class {}>", class.read().name),
         }
     }
 }

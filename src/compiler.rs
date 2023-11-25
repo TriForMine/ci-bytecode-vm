@@ -1,26 +1,26 @@
-use std::rc::Rc;
-use std::sync::atomic::AtomicUsize;
-use parking_lot::{RwLock};
 use crate::chunk::{Chunk, OpCode};
+use crate::parser_rules::ParseRule;
 use crate::parser_rules::RULES;
 use crate::scanner::{Scanner, Token};
 use crate::token_type::TokenType;
-use crate::parser_rules::ParseRule;
 use crate::value::{Function, FunctionType, Upvalue, Value};
 use crate::vm::DEBUG_PRINT_CODE;
+use parking_lot::RwLock;
+use std::rc::Rc;
+use std::sync::atomic::AtomicUsize;
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
 pub enum Precedence {
     None,
-    Assignment,  // =
-    Or,          // or
-    And,         // and
-    Equality,    // == !=
-    Comparison,  // < > <= >=
-    Term,        // + -
-    Factor,      // * /
-    Unary,       // ! -
-    Call,        // . ()
+    Assignment, // =
+    Or,         // or
+    And,        // and
+    Equality,   // == !=
+    Comparison, // < > <= >=
+    Term,       // + -
+    Factor,     // * /
+    Unary,      // ! -
+    Call,       // . ()
 }
 
 struct ScannerState {
@@ -76,7 +76,9 @@ impl Compiler {
 
     pub fn new_enclosed(&self, function_type: FunctionType) -> Self {
         let function = match function_type {
-            FunctionType::Function => Function::new(String::from(self.scanner_state.read().previous.clone().lexeme)),
+            FunctionType::Function => Function::new(String::from(
+                self.scanner_state.read().previous.clone().lexeme,
+            )),
             FunctionType::Script => Function::new_script(),
         };
 
@@ -111,7 +113,9 @@ impl Compiler {
         self.emit_return();
 
         if !self.error_state.read().had_error && DEBUG_PRINT_CODE {
-            self.get_chunk().read().disassemble(&self.function.read().name);
+            self.get_chunk()
+                .read()
+                .disassemble(&self.function.read().name);
         }
 
         if !self.error_state.read().had_error {
@@ -176,7 +180,9 @@ impl Compiler {
     }
 
     fn emit_byte(&self, byte: u8) {
-        self.get_chunk().write().write(byte, self.scanner_state.read().previous.line);
+        self.get_chunk()
+            .write()
+            .write(byte, self.scanner_state.read().previous.line);
     }
 
     fn emit_return(&self) {
@@ -208,7 +214,8 @@ impl Compiler {
     }
 
     fn declaration(&self) {
-        if self.match_token(TokenType::Fun) {
+        if self.match_token(TokenType::Class) {
+        } else if self.match_token(TokenType::Fun) {
             self.fun_declaration();
         } else if self.match_token(TokenType::Var) {
             self.var_declaration();
@@ -255,7 +262,10 @@ impl Compiler {
         compiler.block();
 
         let function = compiler.end_compiler().unwrap();
-        self.emit_bytes(OpCode::Closure.into(), self.make_constant(Value::Function(function)));
+        self.emit_bytes(
+            OpCode::Closure.into(),
+            self.make_constant(Value::Function(function)),
+        );
 
         for upvalue in compiler.upvalues.read().iter() {
             self.emit_byte(if upvalue.is_local { 1 } else { 0 });
@@ -272,7 +282,10 @@ impl Compiler {
             self.emit_byte(OpCode::Nil.into());
         }
 
-        self.consume(TokenType::Semicolon, "Expect ';' after variable declaration.");
+        self.consume(
+            TokenType::Semicolon,
+            "Expect ';' after variable declaration.",
+        );
 
         self.define_variable(global);
     }
@@ -325,7 +338,9 @@ impl Compiler {
         let mut breaks_jumps = Vec::new();
 
         // Performing the comparison for all cases
-        while self.scanner_state.read().current.clone().token_type != TokenType::RightBrace && self.scanner_state.read().current.clone().token_type != TokenType::Eof {
+        while self.scanner_state.read().current.clone().token_type != TokenType::RightBrace
+            && self.scanner_state.read().current.clone().token_type != TokenType::Eof
+        {
             self.consume(TokenType::Case, "Expect 'case' after 'switch'.");
             self.emit_byte(OpCode::Duplicate.into()); // Duplicating switch value for comparison
             self.expression(); // case condition
@@ -472,14 +487,19 @@ impl Compiler {
     }
 
     fn begin_scope(&self) {
-        self.scope_depth.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.scope_depth
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn end_scope(&self) {
-        self.scope_depth.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        self.scope_depth
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
 
         let mut locals = self.locals.write();
-        while locals.len() > 0 && locals[locals.len() - 1].depth > self.scope_depth.load(std::sync::atomic::Ordering::SeqCst) {
+        while locals.len() > 0
+            && locals[locals.len() - 1].depth
+                > self.scope_depth.load(std::sync::atomic::Ordering::SeqCst)
+        {
             if locals[locals.len() - 1].is_captured {
                 self.emit_byte(OpCode::CloseUpvalue.into());
             } else {
@@ -490,7 +510,9 @@ impl Compiler {
     }
 
     fn block(&self) {
-        while self.scanner_state.read().current.token_type != TokenType::RightBrace && self.scanner_state.read().current.token_type != TokenType::Eof {
+        while self.scanner_state.read().current.token_type != TokenType::RightBrace
+            && self.scanner_state.read().current.token_type != TokenType::Eof
+        {
             self.declaration();
         }
 
@@ -534,11 +556,23 @@ impl Compiler {
     }
 
     pub fn number(&self, _can_assign: bool) {
-        let value = self.scanner_state.read().previous.clone().lexeme.parse::<i64>();
+        let value = self
+            .scanner_state
+            .read()
+            .previous
+            .clone()
+            .lexeme
+            .parse::<i64>();
         if value.is_ok() {
             self.emit_constant(Value::Int(value.unwrap()));
         } else {
-            let value = self.scanner_state.read().previous.clone().lexeme.parse::<f64>();
+            let value = self
+                .scanner_state
+                .read()
+                .previous
+                .clone()
+                .lexeme
+                .parse::<f64>();
             if value.is_ok() {
                 self.emit_constant(Value::Float(value.unwrap()));
             } else {
@@ -548,7 +582,9 @@ impl Compiler {
     }
 
     pub fn string(&self, _can_assign: bool) {
-        let value = self.scanner_state.read().previous.clone().lexeme[1..self.scanner_state.read().previous.clone().lexeme.len() - 1].to_string();
+        let value = self.scanner_state.read().previous.clone().lexeme
+            [1..self.scanner_state.read().previous.clone().lexeme.len() - 1]
+            .to_string();
         self.emit_constant(Value::String(value));
     }
 
@@ -627,10 +663,7 @@ impl Compiler {
             }
         }
 
-        self.upvalues.write().push(Upvalue {
-            index,
-            is_local,
-        });
+        self.upvalues.write().push(Upvalue { index, is_local });
 
         self.function.write().up_value_count += 1;
 
@@ -738,7 +771,10 @@ impl Compiler {
     fn parse_precedence(&self, precedence: Precedence) {
         self.advance();
 
-        let prefix_rule = &self.get_rule(&self.scanner_state.read().previous.clone().token_type).prefix.as_ref();
+        let prefix_rule = &self
+            .get_rule(&self.scanner_state.read().previous.clone().token_type)
+            .prefix
+            .as_ref();
 
         if prefix_rule.is_none() {
             self.error("Expect expression.");
@@ -748,9 +784,16 @@ impl Compiler {
         let can_assign = precedence <= Precedence::Assignment;
         prefix_rule.as_ref().unwrap()(self, can_assign);
 
-        while precedence <= self.get_rule(&self.scanner_state.read().current.clone().token_type).precedence {
+        while precedence
+            <= self
+                .get_rule(&self.scanner_state.read().current.clone().token_type)
+                .precedence
+        {
             self.advance();
-            let infix_rule = &self.get_rule(&self.scanner_state.read().previous.clone().token_type).infix.as_ref();
+            let infix_rule = &self
+                .get_rule(&self.scanner_state.read().previous.clone().token_type)
+                .infix
+                .as_ref();
             infix_rule.as_ref().unwrap()(self, can_assign);
         }
 
@@ -812,12 +855,13 @@ impl Compiler {
             return;
         }
 
-
         let name = self.scanner_state.read().previous.clone();
 
         for i in (0..self.locals.read().len()).rev() {
             let local = &self.locals.read()[i];
-            if local.depth != usize::MAX && local.depth < self.scope_depth.load(std::sync::atomic::Ordering::SeqCst) {
+            if local.depth != usize::MAX
+                && local.depth < self.scope_depth.load(std::sync::atomic::Ordering::SeqCst)
+            {
                 break;
             }
 
@@ -846,4 +890,3 @@ impl Compiler {
         self.scanner_state.read().current.token_type == *token_type
     }
 }
-

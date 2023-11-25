@@ -1,6 +1,6 @@
-use std::fmt::Display;
-use crate::debug::{disassemble};
+use crate::debug::disassemble;
 use crate::value::Value;
+use std::fmt::Display;
 
 #[derive(Debug)]
 pub enum OpCode {
@@ -71,7 +71,7 @@ impl From<u8> for OpCode {
             0x1D => OpCode::GetUpvalue,
             0x1E => OpCode::SetUpvalue,
             0x1F => OpCode::CloseUpvalue,
-            _ => panic!("Unknown OpCode: {}", byte)
+            _ => panic!("Unknown OpCode: {}", byte),
         }
     }
 }
