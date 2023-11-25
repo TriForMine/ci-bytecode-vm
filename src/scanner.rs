@@ -1,4 +1,3 @@
-use crate::chunk::{Chunk, OpCode};
 use crate::token_type::TokenType;
 
 #[derive(Debug, Clone)]

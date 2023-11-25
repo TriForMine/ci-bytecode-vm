@@ -584,7 +584,7 @@ impl Compiler {
     }
 
     fn resolve_local(&self, name: Box<Token>) -> u8 {
-        let locals = self.locals.write();
+        let locals = self.locals.read();
         for i in (0..locals.len()).rev() {
             let local = &locals[i];
             if name.lexeme == local.name {
@@ -748,7 +748,7 @@ impl Compiler {
 
         self.locals.write().push(Local {
             name: name.lexeme.clone(),
-            depth: usize::MAX,
+            depth: self.scope_depth.load(std::sync::atomic::Ordering::SeqCst),
         });
     }
 

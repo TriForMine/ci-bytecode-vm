@@ -1,100 +1,85 @@
-use std::sync::Arc;
-use parking_lot::RwLock;
 use crate::chunk::{Chunk, OpCode};
 
-pub struct Dissassembler {
-    chunk: Chunk,
-    offset: usize,
-}
+pub fn disassemble(chunk: &Chunk, name: &str) {
+    let mut offset = 0;
 
-impl Dissassembler {
-    pub fn new(chunk: &Chunk) -> Self {
-        Dissassembler {
-            chunk: chunk.clone(),
-            offset: 0,
-        }
-    }
-
-    fn simple_instruction(&mut self, name: &str) {
+    fn simple_instruction(name: &str, offset: &mut usize) {
         println!("{}", name);
-        self.offset += 1;
+        *offset += 1;
     }
 
-    fn constant_instruction(&mut self, name: &str) {
-        let constant = self.chunk.code[self.offset + 1];
+    fn constant_instruction(chunk: &Chunk, name: &str, offset: &mut usize) {
+        let constant = chunk.code[*offset + 1];
         print!("{:16} {:4} '", name, constant);
-        println!("{}'", self.chunk.constants[constant as usize]);
-
-        self.offset += 2;
+        println!("{}'", chunk.constants[constant as usize]);
+        *offset += 2;
     }
 
-    fn byte_instruction(&mut self, name: &str) {
-        let slot = self.chunk.code[self.offset + 1];
+    fn byte_instruction(chunk: &Chunk, name: &str, offset: &mut usize) {
+        let slot = chunk.code[*offset + 1];
         print!("{:16} {:4}", name, slot);
-        if self.chunk.lines.len() > self.offset + 1 {
-            print!(" (line {})", self.chunk.lines[self.offset + 1]);
+        if chunk.lines.len() > *offset + 1 {
+            print!(" (line {})", chunk.lines[*offset + 1]);
         }
         println!();
-        self.offset += 2;
+        *offset += 2;
     }
 
-    fn jump_instruction(&mut self, name: &str) {
+    fn jump_instruction(chunk: &Chunk, name: &str, offset: &mut usize) {
         // 16 bits
-        let jump = (self.chunk.code[self.offset + 1] as u16) << 8 | self.chunk.code[self.offset + 2] as u16;
+        let jump = (chunk.code[*offset + 1] as u16) << 8 | chunk.code[*offset + 2] as u16;
         print!("{:16} {:4} -> ", name, jump);
-        if self.chunk.lines.len() > self.offset + 1 {
-            print!(" (line {})", self.chunk.lines[self.offset + 1]);
+        if chunk.lines.len() > *offset + 1 {
+            print!(" (line {})", chunk.lines[*offset + 1]);
         }
         println!();
-        self.offset += 3;
+        *offset += 3;
     }
 
-    fn disassemble_instruction(&mut self) {
-        print!("{:04} ", self.offset);
+    fn disassemble_instruction(chunk: &Chunk, offset: &mut usize) {
+        print!("{:04} ", *offset);
 
-        if self.offset > 0 && self.chunk.lines[self.offset] == self.chunk.lines[self.offset - 1] {
+        if *offset > 0 && chunk.lines[*offset] == chunk.lines[*offset - 1] {
             print!("   | ");
         } else {
-            print!("{:4} ", self.chunk.lines[self.offset]);
+            print!("{:4} ", chunk.lines[*offset]);
         }
 
-        let instruction = OpCode::from(self.chunk.code[self.offset]);
+        let instruction = OpCode::from(chunk.code[*offset]);
         match instruction {
-            OpCode::Return => self.simple_instruction("OP_RETURN"),
-            OpCode::Constant => self.constant_instruction("OP_CONSTANT"),
-            OpCode::Negate => self.simple_instruction("OP_NEGATE"),
-            OpCode::Add => self.simple_instruction("OP_ADD"),
-            OpCode::Subtract => self.simple_instruction("OP_SUBTRACT"),
-            OpCode::Multiply => self.simple_instruction("OP_MULTIPLY"),
-            OpCode::Divide => self.simple_instruction("OP_DIVIDE"),
-            OpCode::Nil => self.simple_instruction("OP_NIL"),
-            OpCode::True => self.simple_instruction("OP_TRUE"),
-            OpCode::False => self.simple_instruction("OP_FALSE"),
-            OpCode::Not => self.simple_instruction("OP_NOT"),
-            OpCode::Equal => self.simple_instruction("OP_EQUAL"),
-            OpCode::Greater => self.simple_instruction("OP_GREATER"),
-            OpCode::Less => self.simple_instruction("OP_LESS"),
-            OpCode::Print => self.simple_instruction("OP_PRINT"),
-            OpCode::Pop => self.simple_instruction("OP_POP"),
-            OpCode::DefineGlobal => self.constant_instruction("OP_DEFINE_GLOBAL"),
-            OpCode::GetGlobal => self.constant_instruction("OP_GET_GLOBAL"),
-            OpCode::SetGlobal => self.constant_instruction("OP_SET_GLOBAL"),
-            OpCode::GetLocal => self.byte_instruction("OP_GET_LOCAL"),
-            OpCode::SetLocal => self.byte_instruction("OP_SET_LOCAL"),
-            OpCode::JumpIfFalse => self.jump_instruction("OP_JUMP_IF_FALSE"),
-            OpCode::Jump => self.jump_instruction("OP_JUMP"),
-            OpCode::Loop => self.jump_instruction("OP_LOOP"),
-            OpCode::Duplicate => self.simple_instruction("OP_DUPLICATE"),
-            OpCode::JumpIfTrue => self.jump_instruction("OP_JUMP_IF_TRUE"),
-            OpCode::Call => self.byte_instruction("OP_CALL"),
+            OpCode::Return => simple_instruction("OP_RETURN", offset),
+            OpCode::Constant => constant_instruction(chunk, "OP_CONSTANT", offset),
+            OpCode::Negate => simple_instruction("OP_NEGATE", offset),
+            OpCode::Add => simple_instruction("OP_ADD", offset),
+            OpCode::Subtract => simple_instruction("OP_SUBTRACT", offset),
+            OpCode::Multiply => simple_instruction("OP_MULTIPLY", offset),
+            OpCode::Divide => simple_instruction("OP_DIVIDE", offset),
+            OpCode::Nil => simple_instruction("OP_NIL", offset),
+            OpCode::True => simple_instruction("OP_TRUE", offset),
+            OpCode::False => simple_instruction("OP_FALSE", offset),
+            OpCode::Not => simple_instruction("OP_NOT", offset),
+            OpCode::Equal => simple_instruction("OP_EQUAL", offset),
+            OpCode::Greater => simple_instruction("OP_GREATER", offset),
+            OpCode::Less => simple_instruction("OP_LESS", offset),
+            OpCode::Print => simple_instruction("OP_PRINT", offset),
+            OpCode::Pop => simple_instruction("OP_POP", offset),
+            OpCode::DefineGlobal => constant_instruction(chunk, "OP_DEFINE_GLOBAL", offset),
+            OpCode::GetGlobal => constant_instruction(chunk, "OP_GET_GLOBAL", offset),
+            OpCode::SetGlobal => constant_instruction(chunk, "OP_SET_GLOBAL", offset),
+            OpCode::GetLocal => byte_instruction(chunk, "OP_GET_LOCAL", offset),
+            OpCode::SetLocal => byte_instruction(chunk, "OP_SET_LOCAL", offset),
+            OpCode::JumpIfFalse => jump_instruction(chunk, "OP_JUMP_IF_FALSE", offset),
+            OpCode::Jump => jump_instruction(chunk, "OP_JUMP", offset),
+            OpCode::Loop => jump_instruction(chunk, "OP_LOOP", offset),
+            OpCode::Duplicate => simple_instruction("OP_DUPLICATE", offset),
+            OpCode::JumpIfTrue => jump_instruction(chunk, "OP_JUMP_IF_TRUE", offset),
+            OpCode::Call => byte_instruction(chunk, "OP_CALL", offset),
         }
     }
 
-    pub fn disassemble(&mut self, name: &str) {
-        println!("== {} ==", name);
+    println!("== {} ==", name);
 
-        while self.offset < self.chunk.code.len() {
-            self.disassemble_instruction();
-        }
+    while offset < chunk.code.len() {
+        disassemble_instruction(chunk, &mut offset);
     }
 }

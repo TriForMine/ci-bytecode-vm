@@ -1,5 +1,5 @@
 use std::fmt::Display;
-use crate::debug::Dissassembler;
+use crate::debug::{disassemble};
 use crate::value::Value;
 
 #[derive(Debug)]
@@ -63,7 +63,7 @@ impl From<u8> for OpCode {
             0x19 => OpCode::Duplicate,
             0x1A => OpCode::JumpIfTrue,
             0x1B => OpCode::Call,
-            _ => unreachable!(),
+            _ => panic!("Unknown OpCode: {}", byte)
         }
     }
 }
@@ -103,7 +103,7 @@ impl From<OpCode> for u8 {
 }
 
 impl Display for OpCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             OpCode::Return => write!(f, "RETURN"),
             OpCode::Constant => write!(f, "CONSTANT"),
@@ -144,32 +144,35 @@ pub struct Chunk {
 }
 
 impl Chunk {
-    pub fn new() -> Chunk {
+    pub fn new() -> Self {
         Chunk {
-            code: Vec::new(),
-            constants: Vec::new(),
-            lines: Vec::new(),
+            code: Vec::with_capacity(256),
+            constants: Vec::with_capacity(256),
+            lines: Vec::with_capacity(256),
         }
     }
 
+    #[inline(always)]
     pub fn clear(&mut self) {
         self.code.clear();
         self.constants.clear();
         self.lines.clear();
     }
 
+    #[inline(always)]
     pub fn write(&mut self, byte: u8, line: usize) {
         self.code.push(byte);
         self.lines.push(line);
     }
 
+    #[inline(always)]
     pub fn write_constant(&mut self, value: Value) -> usize {
         self.constants.push(value);
         self.constants.len() - 1
     }
 
+    #[inline(always)]
     pub fn disassemble(&self, name: &str) {
-        let mut disassembler = Dissassembler::new(self);
-        disassembler.disassemble(name);
+        disassemble(self, name);
     }
 }

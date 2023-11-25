@@ -10,6 +10,8 @@ pub enum Value {
     Nil,
     String(String),
     Function(Arc<RwLock<Function>>),
+    NativeFunction(Arc<RwLock<NativeFunction>>),
+    RunTimeError(String),
 }
 
 impl Default for Value {
@@ -67,54 +69,42 @@ impl Function {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct NativeFunction {
+    pub name: String,
+    pub arity: usize,
+    pub function: Box<fn(Vec<Value>) -> Value>,
+}
+
+impl PartialEq for NativeFunction {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl NativeFunction {
+    pub fn new(name: String, arity: usize, function: Box<fn(Vec<Value>) -> Value>) -> Self {
+        NativeFunction {
+            name,
+            arity,
+            function,
+        }
+    }
+}
+
 #[derive(PartialEq)]
 pub enum FunctionType {
     Function,
     Script,
 }
 
-impl FunctionType {
-    pub fn replace(&mut self, function_type: FunctionType) {
-        match self {
-            FunctionType::Function => {
-                *self = function_type;
-            }
-            FunctionType::Script => {
-                *self = function_type;
-            }
-        }
-    }
-}
-
 impl Value {
-    pub fn is_falsey(&self) -> bool {
+    pub fn is_falsely(&self) -> bool {
         match self {
             Value::Nil => true,
             Value::Bool(b) => !b,
             Value::Int(i) => *i == 0,
             Value::Float(f) => *f == 0.0,
-            _ => false,
-        }
-    }
-
-    pub fn is_number(&self) -> bool {
-        match self {
-            Value::Int(_) => true,
-            Value::Float(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_bool(&self) -> bool {
-        match self {
-            Value::Bool(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_nil(&self) -> bool {
-        match self {
-            Value::Nil => true,
             _ => false,
         }
     }
@@ -129,6 +119,8 @@ impl std::fmt::Display for Value {
             Value::Nil => write!(f, "nil"),
             Value::String(s) => write!(f, "{}", s),
             Value::Function(func) => write!(f, "<fn {}>", func.read().name),
+            Value::NativeFunction(func) => write!(f, "<native fn {}>", func.read().name),
+            Value::RunTimeError(s) => write!(f, "{}", s),
         }
     }
 }

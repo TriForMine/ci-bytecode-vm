@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::chunk::{Chunk, OpCode};
+use crate::chunk::{OpCode};
 use crate::compiler::Compiler;
 use crate::value::{FunctionType, Value};
 use parking_lot::RwLock;
 use crate::scanner::Scanner;
+use crate::value;
 
 pub const DEBUG_PRINT_CODE: bool = true;
 pub const DEBUG_TRACE_EXECUTION: bool = false;
@@ -33,13 +34,33 @@ pub struct CallFrame {
     slots: Vec<Value>,
 }
 
+pub fn clock_native(_: Vec<Value>) -> Value {
+    Value::Float(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64())
+}
+
+pub fn sqrt_native(args: Vec<Value>) -> Value {
+    match args[0] {
+        Value::Float(f) => Value::Float(f.sqrt()),
+        Value::Int(i) => Value::Float((i as f64).sqrt()),
+        _ => Value::RunTimeError("Sqrt argument must be a number".to_string()),
+    }
+}
+
 impl VM {
     pub fn new() -> Self {
-        VM {
+        let mut vm = VM {
             globals: HashMap::new(),
             frames: Vec::with_capacity(FRAMES_MAX),
             stack: Vec::with_capacity(STACK_MAX),
-        }
+        };
+
+        vm.define_native("clock".to_string(), Box::new(clock_native), 0);
+        vm.define_native("sqrt".to_string(), Box::new(sqrt_native), 1);
+
+        vm
     }
 
     fn reset_stack(&mut self) {
@@ -56,7 +77,7 @@ impl VM {
 
         let res = match function {
             Some(function) => {
-                self.push(Value::Function(function.clone()));
+                self.stack.push(Value::Function(function.clone()));
                 self.frames.push(CallFrame {
                     function: Value::Function(function.clone()),
                     ip: 0,
@@ -109,8 +130,9 @@ impl VM {
                 let s = a + &b;
                 self.push(Value::String(s));
             }
-            _ => {
-                self.runtime_error("Operands must be numbers");
+
+            (o, a, b) => {
+                self.runtime_error(format!("Operands must be two numbers or two strings. Got {:?} {:?} {:?}", o, a, b).as_str());
             }
         }
     }
@@ -140,17 +162,18 @@ impl VM {
 
             match instruction {
                 OpCode::Return => {
-                   let mut result = self.pop();
+                    let result = self.pop();
 
                     match result {
                         Some(result) => {
-                            let mut frame = self.frames.pop().unwrap();
+                            let frame = self.frames.pop().unwrap();
                             if self.frames.len() == 0 {
-                                self.pop();
+                                self.stack.pop();
                                 return InterpretResult::Ok;
                             }
 
-                            self.stack.truncate(self.stack.len() - frame.slots.len());
+                            let parent_frame = self.frames.last_mut().unwrap();
+                            parent_frame.slots.truncate(parent_frame.slots.len() - frame.slots.len());
                             self.push(result);
                         }
                         None => {
@@ -186,7 +209,7 @@ impl VM {
                 OpCode::False => self.push(Value::Bool(false)),
                 OpCode::Not => {
                     let value = self.pop().unwrap();
-                    self.push(Value::Bool(value.is_falsey()));
+                    self.push(Value::Bool(value.is_falsely()));
                 }
                 OpCode::Print => {
                     println!("{}", self.pop().unwrap());
@@ -226,7 +249,6 @@ impl VM {
                 }
                 OpCode::GetLocal => {
                     let slot = self.read_byte();
-
                     let value = self.frames.last().unwrap().slots[slot as usize].clone();
                     self.push(value);
                 }
@@ -237,13 +259,13 @@ impl VM {
                 }
                 OpCode::JumpIfFalse => {
                     let offset = self.read_short();
-                    if self.peek(0).unwrap().is_falsey() {
+                    if self.peek(0).unwrap().is_falsely() {
                         self.frames.last_mut().unwrap().ip += offset as usize;
                     }
                 }
                 OpCode::JumpIfTrue => {
                     let offset = self.read_short();
-                    if !self.peek(0).unwrap().is_falsey() {
+                    if !self.peek(0).unwrap().is_falsely() {
                         self.frames.last_mut().unwrap().ip += offset as usize;
                     }
                 }
@@ -279,6 +301,33 @@ impl VM {
                 self.call(function, arg_count);
                 true
             }
+            Value::NativeFunction(function) => {
+                let function = function.read();
+                if arg_count != function.arity as u8 {
+                    self.runtime_error(format!("Expected {} arguments but got {}", function.arity, arg_count).as_str());
+                    return false;
+                }
+
+                let mut args = Vec::with_capacity(arg_count as usize);
+                for _ in 0..arg_count {
+                    args.push(self.pop().unwrap());
+                }
+
+                args.reverse();
+
+                let result = (function.function)(args);
+
+                match result {
+                    Value::RunTimeError(s) => {
+                        self.runtime_error(s.as_str());
+                        false
+                    }
+                    _ => {
+                        self.push(result);
+                        true
+                    }
+                }
+            }
             _ => {
                 self.runtime_error("Can only call functions and classes");
                 false
@@ -286,16 +335,19 @@ impl VM {
         }
     }
 
-    fn call(&mut self, function: Arc<RwLock<crate::value::Function>>, arg_count: u8) {
+    fn call(&mut self, function: Arc<RwLock<value::Function>>, arg_count: u8) {
         if arg_count != function.read().arity as u8 {
             self.runtime_error(format!("Expected {} arguments but got {}", function.read().arity, arg_count).as_str());
             return;
         }
 
+        let frame = self.frames.last_mut().unwrap();
+        let mut slots = frame.slots.split_off(frame.slots.len() - arg_count as usize);
+
         self.frames.push(CallFrame {
             function: Value::Function(function.clone()),
             ip: 0,
-            slots: self.stack.split_off(self.stack.len() - (arg_count as usize)),
+            slots,
         });
     }
 
@@ -333,7 +385,16 @@ impl VM {
         }
     }
 
-    #[inline]
+    fn define_native(&mut self, name: String, function: Box<fn(Vec<Value>) -> Value>, arity: usize) {
+        self.stack.push(Value::String(name.clone()));
+        let native_function = Arc::new(RwLock::new(value::NativeFunction::new(name.clone(), arity, function)));
+        self.stack.push(Value::NativeFunction(native_function.clone()));
+        self.globals.insert(name.clone(), Value::NativeFunction(native_function));
+        self.stack.pop();
+        self.stack.pop();
+    }
+
+    #[inline(always)]
     fn read_byte(&mut self) -> u8 {
         let frame = self.frames.last_mut();
         match frame {
@@ -352,7 +413,7 @@ impl VM {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn read_constant(&mut self) -> Value {
         let frame = self.frames.last_mut().unwrap();
         match frame.function {
@@ -367,14 +428,14 @@ impl VM {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn read_short(&mut self) -> u16 {
         let frame = self.frames.last_mut().unwrap();
         match frame.function {
             Value::Function(ref function) => {
                 let function = function.read();
-                let byte1 = function.chunk.read().code[frame.ip];
-                let byte2 = function.chunk.read().code[frame.ip + 1];
+                let byte1 = function.chunk.read().code[frame.ip].clone();
+                let byte2 = function.chunk.read().code[frame.ip + 1].clone();
                 frame.ip += 2;
                 (byte1 as u16) << 8 | (byte2 as u16)
             }
@@ -382,23 +443,19 @@ impl VM {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn push(&mut self, value: Value) {
-        self.stack.push(value);
+        self.frames.last_mut().unwrap().slots.push(value);
     }
 
-    #[inline]
+    #[inline(always)]
     fn pop(&mut self) -> Option<Value> {
-        self.stack.pop()
+        self.frames.last_mut().unwrap().slots.pop()
     }
 
-    #[inline]
+    #[inline(always)]
     fn peek(&self, distance: usize) -> Option<&Value> {
-        let len = self.stack.len();
-        if len > distance {
-            Some(&self.stack[len - distance - 1])
-        } else {
-            None
-        }
+        let len = self.frames.last().unwrap().slots.len();
+        self.frames.last().unwrap().slots.get(len - 1 - distance)
     }
 }
