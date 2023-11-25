@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::{Read};
 use std::rc::Rc;
 use crate::chunk::{OpCode};
 use crate::compiler::Compiler;
@@ -49,6 +50,33 @@ pub fn sqrt_native(args: Vec<Value>) -> Value {
     }
 }
 
+pub fn input_native(_: Vec<Value>) -> Value {
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).expect("Failed to read line");
+    Value::String(input.trim().to_string())
+}
+
+pub fn throw_native(args: Vec<Value>) -> Value {
+    Value::RunTimeError(args[0].to_string())
+}
+
+pub fn open_file_native(args: Vec<Value>) -> Value {
+    match &args[0] {
+        Value::String(s) => {
+            match std::fs::File::open(s.clone()) {
+                Ok(file) => {
+                    let mut file = std::io::BufReader::new(file);
+                    let mut contents = String::new();
+                    file.read_to_string(&mut contents).expect("Failed to read file");
+                    Value::String(contents)
+                },
+                Err(_) => Value::RunTimeError(format!("Failed to open file '{}'", s)),
+            }
+        }
+        _ => Value::RunTimeError("Expected string".to_string()),
+    }
+}
+
 impl VM {
     pub fn new() -> Self {
         let mut vm = VM {
@@ -59,6 +87,9 @@ impl VM {
 
         vm.define_native("clock".to_string(), Box::new(clock_native), 0);
         vm.define_native("sqrt".to_string(), Box::new(sqrt_native), 1);
+        vm.define_native("input".to_string(), Box::new(input_native), 0);
+        vm.define_native("throw".to_string(), Box::new(throw_native), 1);
+        vm.define_native("open".to_string(), Box::new(open_file_native), 1);
 
         vm
     }
@@ -370,6 +401,8 @@ impl VM {
                 let args = frame.slots.split_off(frame.slots.len() - arg_count as usize);
 
                 let result = (function.function)(args);
+
+                self.pop();
 
                 match result {
                     Value::RunTimeError(s) => {
