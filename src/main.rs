@@ -1,7 +1,4 @@
 use std::io::Write;
-use std::rc::Rc;
-use parking_lot::RwLock;
-use crate::value::FunctionType;
 
 mod chunk;
 mod debug;

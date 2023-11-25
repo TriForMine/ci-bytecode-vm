@@ -168,13 +168,6 @@ impl Chunk {
         }
     }
 
-    #[inline(never)]
-    pub fn clear(&mut self) {
-        self.code.clear();
-        self.constants.clear();
-        self.lines.clear();
-    }
-
     #[inline(always)]
     pub fn write(&mut self, byte: u8, line: usize) {
         self.code.push(byte);

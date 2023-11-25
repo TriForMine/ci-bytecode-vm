@@ -202,9 +202,9 @@ impl VM {
                         Value::Function(function) => function,
                         _ => panic!("Expected function"),
                     };
-                    let mut closure = value::Closure::new(function.clone());
+                    let closure = value::Closure::new(function.clone());
 
-                    for i in 0..function.read().up_value_count {
+                    for _ in 0..function.read().up_value_count {
                         let is_local = self.read_byte() == 1;
                         let index = self.read_byte();
                         if is_local {
@@ -437,7 +437,7 @@ impl VM {
         }
 
         let frame = self.frames.last_mut().unwrap();
-        let mut slots = frame.slots.split_off(frame.slots.len() - arg_count as usize);
+        let slots = frame.slots.split_off(frame.slots.len() - arg_count as usize);
 
         self.frames.push(CallFrame {
             closure,
@@ -469,7 +469,6 @@ impl VM {
         self.stack.truncate(frame.slots.len());
 
         if self.frames.len() == 1 {
-            let frame = self.frames.last_mut().unwrap();
             self.stack.pop();
         } else {
             self.frames.pop();

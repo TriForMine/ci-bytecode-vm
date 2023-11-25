@@ -13,7 +13,6 @@ pub enum Value {
     Closure(Rc<RwLock<Closure>>),
     NativeFunction(Rc<RwLock<NativeFunction>>),
     RunTimeError(String),
-    UpValue(Rc<RwLock<UpValueObject>>),
 }
 
 #[derive(Clone, Debug)]
@@ -172,7 +171,6 @@ impl std::fmt::Display for Value {
             Value::Closure(closure) => write!(f, "<fn {}>", closure.read().function.read().name),
             Value::NativeFunction(func) => write!(f, "<native fn {}>", func.read().name),
             Value::RunTimeError(s) => write!(f, "{}", s),
-            Value::UpValue(up_value) => write!(f, "{:?}", up_value),
         }
     }
 }

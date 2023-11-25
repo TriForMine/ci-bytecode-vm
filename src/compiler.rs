@@ -21,7 +21,6 @@ pub enum Precedence {
     Factor,      // * /
     Unary,       // ! -
     Call,        // . ()
-    Primary,
 }
 
 struct ScannerState {
