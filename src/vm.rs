@@ -12,7 +12,7 @@ pub const DEBUG_PRINT_CODE: bool = true;
 pub const DEBUG_TRACE_EXECUTION: bool = false;
 
 pub const FRAMES_MAX: usize = 64;
-pub const STACK_MAX: usize = FRAMES_MAX * 256;
+pub const STACK_MAX: usize = 256;
 
 #[derive(PartialEq)]
 pub enum InterpretResult {
@@ -278,6 +278,7 @@ impl VM {
                             parent_frame
                                 .slots
                                 .truncate(parent_frame.slots.len() - frame.slots.len());
+
                             self.push(result);
                         }
                         None => {
@@ -498,7 +499,7 @@ impl VM {
         arg_count: u8,
     ) -> bool {
         if let Some(method) = class.read().methods.read().get(&name.to_string()) {
-            self.call(method.clone(), arg_count);
+            self.call(method.clone(), arg_count, false);
             true
         } else {
             self.runtime_error(format!("Undefined property '{}'", name).as_str());
@@ -601,13 +602,16 @@ impl VM {
                     receiver.read().clone(),
                 );
 
-                self.call(method, arg_count);
-
-                true
+                self.call(method, arg_count, false)
             }
             Value::Closure(closure) => {
-                self.call(closure, arg_count);
-                true
+                let frame = self.frames.last_mut().unwrap();
+
+                frame
+                    .slots
+                    .insert(frame.slots.len() - arg_count as usize, Value::Nil);
+
+                self.call(closure, arg_count, false)
             }
             Value::Class(class) => {
                 self.stack.pop();
@@ -626,7 +630,9 @@ impl VM {
                             Value::Instance(instance.clone()),
                         );
 
-                        self.call(initializer.clone(), arg_count);
+                        if !self.call(initializer.clone(), arg_count, true) {
+                            return false;
+                        }
                     }
                     None => {
                         if arg_count != 0 {
@@ -637,7 +643,6 @@ impl VM {
                 }
 
                 self.push(Value::Instance(instance.clone()));
-
                 self.pop();
 
                 true
@@ -648,6 +653,7 @@ impl VM {
                 let frame = self.frames.last_mut().unwrap();
                 frame.slots.truncate(frame.slots.len() - arg_count as usize);
 
+                self.pop();
                 self.push(result);
                 true
             }
@@ -667,7 +673,7 @@ impl VM {
         (function.read().function)(args)
     }
 
-    fn call(&mut self, closure: Rc<RwLock<value::Closure>>, arg_count: u8) {
+    fn call(&mut self, closure: Rc<RwLock<value::Closure>>, arg_count: u8, is_init: bool) -> bool {
         if arg_count != closure.read().function.read().arity as u8 {
             self.runtime_error(
                 format!(
@@ -677,10 +683,17 @@ impl VM {
                 )
                 .as_str(),
             );
-            return;
+            return false;
         }
 
         let frame = self.frames.last_mut().unwrap();
+
+        if !is_init {
+            frame
+                .slots
+                .insert(frame.slots.len() - arg_count as usize, Value::Nil);
+        }
+
         let slots = frame
             .slots
             .split_off(frame.slots.len() - arg_count as usize - 1);
@@ -690,6 +703,8 @@ impl VM {
             ip: 0,
             slots,
         });
+
+        true
     }
 
     fn runtime_error(&mut self, message: &str) {
