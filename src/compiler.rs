@@ -518,8 +518,17 @@ impl Compiler {
     }
 
     pub fn number(&self, _can_assign: bool) {
-        let value = self.scanner_state.read().previous.clone().lexeme.parse::<f64>().unwrap();
-        self.emit_constant(Value::Number(value));
+        let value = self.scanner_state.read().previous.clone().lexeme.parse::<i64>();
+        if value.is_ok() {
+            self.emit_constant(Value::Int(value.unwrap()));
+        } else {
+            let value = self.scanner_state.read().previous.clone().lexeme.parse::<f64>();
+            if value.is_ok() {
+                self.emit_constant(Value::Float(value.unwrap()));
+            } else {
+                self.error("Invalid number.");
+            }
+        }
     }
 
     pub fn string(&self, _can_assign: bool) {

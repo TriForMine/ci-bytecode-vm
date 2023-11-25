@@ -4,7 +4,8 @@ use parking_lot::RwLock;
 
 #[derive(Clone, Debug)]
 pub enum Value {
-    Number(f64),
+    Int(i64),
+    Float(f64),
     Bool(bool),
     Nil,
     String(String),
@@ -20,7 +21,8 @@ impl Default for Value {
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Value::Number(n1), Value::Number(n2)) => n1 == n2,
+            (Value::Float(f1), Value::Float(f2)) => f1 == f2,
+            (Value::Int(i1), Value::Int(i2)) => i1 == i2,
             (Value::Bool(b1), Value::Bool(b2)) => b1 == b2,
             (Value::Nil, Value::Nil) => true,
             (Value::String(s1), Value::String(s2)) => s1 == s2,
@@ -89,14 +91,16 @@ impl Value {
         match self {
             Value::Nil => true,
             Value::Bool(b) => !b,
-            Value::Number(n) => *n == 0.0,
+            Value::Int(i) => *i == 0,
+            Value::Float(f) => *f == 0.0,
             _ => false,
         }
     }
 
     pub fn is_number(&self) -> bool {
         match self {
-            Value::Number(_) => true,
+            Value::Int(_) => true,
+            Value::Float(_) => true,
             _ => false,
         }
     }
@@ -114,19 +118,13 @@ impl Value {
             _ => false,
         }
     }
-
-    pub fn to_number(&self) -> f64 {
-        match self {
-            Value::Number(n) => *n,
-            _ => panic!("Value is not a number"),
-        }
-    }
 }
 
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Value::Number(n) => write!(f, "{}", n),
+            Value::Int(i) => write!(f, "{}", i),
+            Value::Float(fl) => write!(f, "{:.?}", fl),
             Value::Bool(b) => write!(f, "{}", b),
             Value::Nil => write!(f, "nil"),
             Value::String(s) => write!(f, "{}", s),

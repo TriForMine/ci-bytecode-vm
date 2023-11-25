@@ -79,13 +79,32 @@ impl VM {
         let a = self.pop().unwrap();
 
         match (op, a, b) {
-            (OpCode::Add, Value::Number(a), Value::Number(b)) => self.push(Value::Number(a + b)),
-            (OpCode::Subtract, Value::Number(a), Value::Number(b)) => self.push(Value::Number(a - b)),
-            (OpCode::Multiply, Value::Number(a), Value::Number(b)) => self.push(Value::Number(a * b)),
-            (OpCode::Divide, Value::Number(a), Value::Number(b)) => self.push(Value::Number(a / b)),
+            (OpCode::Add, Value::Float(a), Value::Float(b)) => self.push(Value::Float(a + b)),
+            (OpCode::Subtract, Value::Float(a), Value::Float(b)) => self.push(Value::Float(a - b)),
+            (OpCode::Multiply, Value::Float(a), Value::Float(b)) => self.push(Value::Float(a * b)),
+            (OpCode::Divide, Value::Float(a), Value::Float(b)) => self.push(Value::Float(a / b)),
+            (OpCode::Greater, Value::Float(a), Value::Float(b)) => self.push(Value::Bool(a > b)),
+            (OpCode::Less, Value::Float(a), Value::Float(b)) => self.push(Value::Bool(a < b)),
+            (OpCode::Add, Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 + b)),
+            (OpCode::Subtract, Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 - b)),
+            (OpCode::Multiply, Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 * b)),
+            (OpCode::Divide, Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 / b)),
+            (OpCode::Greater, Value::Int(a), Value::Float(b)) => self.push(Value::Bool(a as f64 > b)),
+            (OpCode::Less, Value::Int(a), Value::Float(b)) => self.push(Value::Bool((a as f64) < b)),
+            (OpCode::Add, Value::Float(a), Value::Int(b)) => self.push(Value::Float(a + b as f64)),
+            (OpCode::Subtract, Value::Float(a), Value::Int(b)) => self.push(Value::Float(a - b as f64)),
+            (OpCode::Multiply, Value::Float(a), Value::Int(b)) => self.push(Value::Float(a * b as f64)),
+            (OpCode::Divide, Value::Float(a), Value::Int(b)) => self.push(Value::Float(a / b as f64)),
+            (OpCode::Greater, Value::Float(a), Value::Int(b)) => self.push(Value::Bool(a > b as f64)),
+            (OpCode::Less, Value::Float(a), Value::Int(b)) => self.push(Value::Bool(a < b as f64)),
+            (OpCode::Add, Value::Int(a), Value::Int(b)) => self.push(Value::Int(a + b)),
+            (OpCode::Subtract, Value::Int(a), Value::Int(b)) => self.push(Value::Int(a - b)),
+            (OpCode::Multiply, Value::Int(a), Value::Int(b)) => self.push(Value::Int(a * b)),
+            (OpCode::Divide, Value::Int(a), Value::Int(b)) => self.push(Value::Int(a / b)),
+            (OpCode::Greater, Value::Int(a), Value::Int(b)) => self.push(Value::Bool(a > b)),
+            (OpCode::Less, Value::Int(a), Value::Int(b)) => self.push(Value::Bool(a < b)),
+
             (OpCode::Equal, a, b) => self.push(Value::Bool(a == b)),
-            (OpCode::Greater, Value::Number(a), Value::Number(b)) => self.push(Value::Bool(a > b)),
-            (OpCode::Less, Value::Number(a), Value::Number(b)) => self.push(Value::Bool(a < b)),
             (OpCode::Add, Value::String(a), Value::String(b)) => {
                 let s = a + &b;
                 self.push(Value::String(s));
@@ -131,8 +150,7 @@ impl VM {
                                 return InterpretResult::Ok;
                             }
 
-                            // Add frame stack on top of current stack
-                            self.stack.append(&mut frame.slots);
+                            self.stack.truncate(self.stack.len() - frame.slots.len());
                             self.push(result);
                         }
                         None => {
@@ -148,7 +166,8 @@ impl VM {
                 OpCode::Negate => {
                     let value = self.pop().unwrap();
                     match value {
-                        Value::Number(n) => self.push(Value::Number(-n)),
+                        Value::Int(value) => self.push(Value::Int(-value)),
+                        Value::Float(value) => self.push(Value::Float(-value)),
                         _ => {
                             self.runtime_error("Operand must be a number");
                             return InterpretResult::RuntimeError;
@@ -272,10 +291,10 @@ impl VM {
             self.runtime_error(format!("Expected {} arguments but got {}", function.read().arity, arg_count).as_str());
             return;
         }
+
         self.frames.push(CallFrame {
             function: Value::Function(function.clone()),
             ip: 0,
-            // Should only have arg_count + 1 slots
             slots: self.stack.split_off(self.stack.len() - (arg_count as usize)),
         });
     }
@@ -374,10 +393,10 @@ impl VM {
     }
 
     #[inline]
-    fn peek(&self, distance: usize) -> Option<Value> {
+    fn peek(&self, distance: usize) -> Option<&Value> {
         let len = self.stack.len();
         if len > distance {
-            Some(self.stack[len - distance - 1].clone())
+            Some(&self.stack[len - distance - 1])
         } else {
             None
         }

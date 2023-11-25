@@ -24,6 +24,7 @@ impl Dissassembler {
         let constant = self.chunk.code[self.offset + 1];
         print!("{:16} {:4} '", name, constant);
         println!("{}'", self.chunk.constants[constant as usize]);
+
         self.offset += 2;
     }
 
