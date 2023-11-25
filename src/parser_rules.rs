@@ -295,7 +295,7 @@ lazy_static! {
         m.insert(
             TokenType::This,
             ParseRule {
-                prefix: None,
+                prefix: Some(Box::new(Compiler::this)),
                 infix: None,
                 precedence: Precedence::None,
             },

@@ -71,6 +71,7 @@ pub fn open_file_native(args: Vec<Value>) -> Value {
                 let mut contents = String::new();
                 file.read_to_string(&mut contents)
                     .expect("Failed to read file");
+
                 Value::String(contents)
             }
             Err(_) => Value::RunTimeError(format!("Failed to open file '{}'", s)),
@@ -229,6 +230,13 @@ impl VM {
             }
 
             match instruction {
+                OpCode::Invoke => {
+                    let method = self.read_constant();
+                    let arg_count = self.read_byte();
+                    if !self.invoke(method, arg_count) {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
                 OpCode::Closure => {
                     let constant = self.read_constant();
                     let function = match constant {
@@ -421,17 +429,14 @@ impl VM {
                 }
                 OpCode::GetProperty => {
                     let name = self.read_constant();
-                    let instance = self.pop().unwrap();
-                    match instance {
-                        Value::Instance(instance) => {
+                    let value = self.pop().unwrap();
+                    match value {
+                        Value::Instance(ref instance) => {
                             if let Some(value) =
                                 instance.read().fields.read().get(&name.to_string())
                             {
                                 self.push(value.clone());
-                            } else {
-                                self.runtime_error(
-                                    format!("Undefined property '{}'", name).as_str(),
-                                );
+                            } else if !self.bind_method(Rc::new(RwLock::new(value.clone())), name) {
                                 return InterpretResult::RuntimeError;
                             }
                         }
@@ -459,8 +464,94 @@ impl VM {
                         }
                     }
                 }
+                OpCode::Method => {
+                    let name = self.read_constant();
+                    self.define_method(name);
+                }
             }
         }
+    }
+
+    fn invoke(&mut self, name: Value, arg_count: u8) -> bool {
+        let receiver = self.peek(arg_count as usize).unwrap().clone();
+
+        match receiver {
+            Value::Instance(instance) => {
+                if let Some(value) = instance.read().fields.read().get(&name.to_string()) {
+                    self.stack.pop();
+                    return self.call_value(value.clone(), arg_count);
+                }
+
+                self.invoke_from_class(instance.read().clone().class, name, arg_count)
+            }
+            _ => {
+                self.runtime_error("Only instances have methods");
+                false
+            }
+        }
+    }
+
+    fn invoke_from_class(
+        &mut self,
+        class: Rc<RwLock<value::Class>>,
+        name: Value,
+        arg_count: u8,
+    ) -> bool {
+        if let Some(method) = class.read().methods.read().get(&name.to_string()) {
+            self.call(method.clone(), arg_count);
+            true
+        } else {
+            self.runtime_error(format!("Undefined property '{}'", name).as_str());
+            false
+        }
+    }
+
+    fn bind_method(&mut self, value: Rc<RwLock<value::Value>>, name: Value) -> bool {
+        match &*value.read() {
+            Value::Instance(instance) => {
+                if let Some(method) = instance
+                    .read()
+                    .class
+                    .read()
+                    .methods
+                    .read()
+                    .get(&name.to_string())
+                {
+                    let bound_method = Value::BoundMethod(Rc::new(RwLock::new(
+                        value::BoundMethod::new(value.clone(), method.clone()),
+                    )));
+                    self.pop();
+                    self.push(bound_method);
+                    true
+                } else {
+                    self.runtime_error(format!("Undefined property '{}'", name).as_str());
+                    false
+                }
+            }
+            _ => {
+                self.runtime_error("Only instances have methods");
+                false
+            }
+        }
+    }
+
+    fn define_method(&mut self, name: Value) {
+        let method = self.peek(0).unwrap().clone();
+        let class = self.peek(1).unwrap().clone();
+        match (class, method) {
+            (Value::Class(class), Value::Closure(method)) => {
+                class
+                    .write()
+                    .methods
+                    .write()
+                    .insert(name.to_string(), method);
+            }
+            _ => {
+                self.runtime_error("Only classes have methods");
+                return;
+            }
+        }
+        self.pop();
     }
 
     fn close_up_values(&mut self) {
@@ -498,57 +589,82 @@ impl VM {
 
     fn call_value(&mut self, callee: Value, arg_count: u8) -> bool {
         match callee {
+            Value::BoundMethod(bound_method) => {
+                let bound_method = bound_method.write();
+                let method = bound_method.method.clone();
+                let receiver = bound_method.receiver.clone();
+
+                let frame = self.frames.last_mut().unwrap();
+
+                frame.slots.insert(
+                    frame.slots.len() - arg_count as usize,
+                    receiver.read().clone(),
+                );
+
+                self.call(method, arg_count);
+
+                true
+            }
             Value::Closure(closure) => {
                 self.call(closure, arg_count);
                 true
             }
             Value::Class(class) => {
                 self.stack.pop();
-                let instance =
-                    Value::Instance(Rc::new(RwLock::new(value::Instance::new(class.clone()))));
+                let instance = Rc::new(RwLock::new(value::Instance::new(class.clone())));
 
-                self.push(instance);
+                let class = class.read();
+                let methods = class.methods.read();
+                let initializer = methods.get("init");
+
+                match initializer {
+                    Some(initializer) => {
+                        let frame = self.frames.last_mut().unwrap();
+
+                        frame.slots.insert(
+                            frame.slots.len() - arg_count as usize,
+                            Value::Instance(instance.clone()),
+                        );
+
+                        self.call(initializer.clone(), arg_count);
+                    }
+                    None => {
+                        if arg_count != 0 {
+                            self.runtime_error("Expected 0 arguments but got 1");
+                            return false;
+                        }
+                    }
+                }
+
+                self.push(Value::Instance(instance.clone()));
+
+                self.pop();
 
                 true
             }
             Value::NativeFunction(function) => {
-                let function = function.read();
-                if arg_count != function.arity as u8 {
-                    self.runtime_error(
-                        format!(
-                            "Expected {} arguments but got {}",
-                            function.arity, arg_count
-                        )
-                        .as_str(),
-                    );
-                    return false;
-                }
+                let result = self.native_call(function, arg_count);
 
                 let frame = self.frames.last_mut().unwrap();
-                let args = frame
-                    .slots
-                    .split_off(frame.slots.len() - arg_count as usize);
+                frame.slots.truncate(frame.slots.len() - arg_count as usize);
 
-                let result = (function.function)(args);
-
-                self.pop();
-
-                match result {
-                    Value::RunTimeError(s) => {
-                        self.runtime_error(s.as_str());
-                        false
-                    }
-                    _ => {
-                        self.push(result);
-                        true
-                    }
-                }
+                self.push(result);
+                true
             }
             _ => {
                 self.runtime_error("Can only call functions and classes");
                 false
             }
         }
+    }
+
+    fn native_call(&mut self, function: Rc<RwLock<value::NativeFunction>>, arg_count: u8) -> Value {
+        let mut args = Vec::new();
+        for _ in 0..arg_count {
+            args.push(self.pop().unwrap());
+        }
+        args.reverse();
+        (function.read().function)(args)
     }
 
     fn call(&mut self, closure: Rc<RwLock<value::Closure>>, arg_count: u8) {
@@ -567,7 +683,7 @@ impl VM {
         let frame = self.frames.last_mut().unwrap();
         let slots = frame
             .slots
-            .split_off(frame.slots.len() - arg_count as usize);
+            .split_off(frame.slots.len() - arg_count as usize - 1);
 
         self.frames.push(CallFrame {
             closure,

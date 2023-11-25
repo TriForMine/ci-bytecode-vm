@@ -38,6 +38,8 @@ pub enum OpCode {
     Class,
     GetProperty,
     SetProperty,
+    Method,
+    Invoke,
 }
 
 impl From<u8> for OpCode {
@@ -77,6 +79,8 @@ impl From<u8> for OpCode {
             0x20 => OpCode::Class,
             0x21 => OpCode::GetProperty,
             0x22 => OpCode::SetProperty,
+            0x23 => OpCode::Method,
+            0x24 => OpCode::Invoke,
             _ => panic!("Unknown OpCode: {}", byte),
         }
     }
@@ -119,6 +123,8 @@ impl From<OpCode> for u8 {
             OpCode::Class => 0x20,
             OpCode::GetProperty => 0x21,
             OpCode::SetProperty => 0x22,
+            OpCode::Method => 0x23,
+            OpCode::Invoke => 0x24,
         }
     }
 }
@@ -160,6 +166,8 @@ impl Display for OpCode {
             OpCode::Class => write!(f, "CLASS"),
             OpCode::GetProperty => write!(f, "GET_PROPERTY"),
             OpCode::SetProperty => write!(f, "SET_PROPERTY"),
+            OpCode::Method => write!(f, "METHOD"),
+            OpCode::Invoke => write!(f, "INVOKE"),
         }
     }
 }

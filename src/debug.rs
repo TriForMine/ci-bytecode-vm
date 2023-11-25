@@ -78,7 +78,6 @@ pub fn disassemble(chunk: &Chunk, name: &str) {
             OpCode::Closure => {
                 let constant = chunk.code[*offset + 1];
                 print!("{:16} {:4} ", "OP_CLOSURE", constant);
-                println!("{} ", chunk.constants[constant as usize]);
                 let function = match &chunk.constants[constant as usize] {
                     Value::Function(f) => f,
                     _ => panic!("Expected function"),
@@ -99,6 +98,21 @@ pub fn disassemble(chunk: &Chunk, name: &str) {
             OpCode::Class => constant_instruction(chunk, "OP_CLASS", offset),
             OpCode::GetProperty => constant_instruction(chunk, "OP_GET_PROPERTY", offset),
             OpCode::SetProperty => constant_instruction(chunk, "OP_SET_PROPERTY", offset),
+            OpCode::Method => constant_instruction(chunk, "OP_METHOD", offset),
+            OpCode::Invoke => {
+                let constant = chunk.code[*offset + 1];
+                let arg_count = chunk.code[*offset + 2];
+                print!("{:16} {:4} {:4} ", "OP_INVOKE", constant, arg_count);
+
+                let constant = match &chunk.constants[constant as usize] {
+                    Value::String(s) => s,
+                    _ => panic!("Expected string"),
+                };
+
+                println!("{} ", constant);
+
+                *offset += 3;
+            }
         }
     }
 

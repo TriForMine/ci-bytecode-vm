@@ -16,6 +16,25 @@ pub enum Value {
     RunTimeError(String),
     Class(Rc<RwLock<Class>>),
     Instance(Rc<RwLock<Instance>>),
+    BoundMethod(Rc<RwLock<BoundMethod>>),
+}
+
+#[derive(Clone, Debug)]
+pub struct BoundMethod {
+    pub receiver: Rc<RwLock<Value>>,
+    pub method: Rc<RwLock<Closure>>,
+}
+
+impl BoundMethod {
+    pub fn new(receiver: Rc<RwLock<Value>>, method: Rc<RwLock<Closure>>) -> Self {
+        BoundMethod { receiver, method }
+    }
+}
+
+impl PartialEq for BoundMethod {
+    fn eq(&self, other: &Self) -> bool {
+        self.method.read().function.read().name == other.method.read().function.read().name
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -36,11 +55,15 @@ impl Instance {
 #[derive(Clone, Debug)]
 pub struct Class {
     pub name: String,
+    pub methods: Rc<RwLock<HashMap<String, Rc<RwLock<Closure>>>>>,
 }
 
 impl Class {
     pub fn new(name: String) -> Self {
-        Class { name }
+        Class {
+            name,
+            methods: Rc::new(RwLock::new(HashMap::new())),
+        }
     }
 }
 
@@ -182,7 +205,9 @@ impl NativeFunction {
 #[derive(PartialEq)]
 pub enum FunctionType {
     Function,
+    Method,
     Script,
+    Initializer,
 }
 
 impl Value {
@@ -212,6 +237,13 @@ impl std::fmt::Display for Value {
             Value::Class(class) => write!(f, "<class {}>", class.read().name),
             Value::Instance(instance) => {
                 write!(f, "<instance {}>", instance.read().class.read().name)
+            }
+            Value::BoundMethod(bound_method) => {
+                write!(
+                    f,
+                    "<bound method {}>",
+                    bound_method.read().method.read().function.read().name
+                )
             }
         }
     }

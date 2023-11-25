@@ -41,6 +41,11 @@ struct Local {
     pub is_captured: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct ClassCompiler {
+    pub enclosing: Option<Box<ClassCompiler>>,
+}
+
 #[derive(Clone)]
 pub struct Compiler {
     scanner_state: Rc<RwLock<ScannerState>>,
@@ -50,11 +55,28 @@ pub struct Compiler {
     function: Rc<RwLock<Function>>,
     function_type: Rc<RwLock<FunctionType>>,
     enclosing: Option<Box<Compiler>>,
-    upvalues: Rc<RwLock<Vec<Upvalue>>>,
+    up_values: Rc<RwLock<Vec<Upvalue>>>,
+    class_compiler: Rc<RwLock<Option<Box<ClassCompiler>>>>,
 }
 
 impl Compiler {
     pub fn new(function_type: FunctionType, scanner: Rc<RwLock<Scanner>>) -> Self {
+        let mut locals = Vec::new();
+
+        if function_type == FunctionType::Method || function_type == FunctionType::Initializer {
+            locals.push(Local {
+                name: String::from("this"),
+                depth: 0,
+                is_captured: false,
+            });
+        } else {
+            locals.push(Local {
+                name: String::from(""),
+                depth: 0,
+                is_captured: false,
+            });
+        }
+
         Compiler {
             scanner_state: Rc::new(RwLock::new(ScannerState {
                 scanner,
@@ -65,12 +87,13 @@ impl Compiler {
                 had_error: false,
                 panic_mode: false,
             })),
-            locals: Rc::new(RwLock::new(Vec::new())),
+            locals: Rc::new(RwLock::new(locals)),
             scope_depth: Rc::new(AtomicUsize::new(0)),
             function: Rc::new(RwLock::new(Function::new_script())),
             function_type: Rc::new(RwLock::new(function_type)),
             enclosing: None,
-            upvalues: Rc::new(RwLock::new(Vec::new())),
+            up_values: Rc::new(RwLock::new(Vec::new())),
+            class_compiler: Rc::new(RwLock::new(None)),
         }
     }
 
@@ -80,17 +103,38 @@ impl Compiler {
                 self.scanner_state.read().previous.clone().lexeme,
             )),
             FunctionType::Script => Function::new_script(),
+            FunctionType::Method => Function::new(String::from(
+                self.scanner_state.read().previous.clone().lexeme,
+            )),
+            FunctionType::Initializer => Function::new(String::from("init")),
         };
+
+        let mut locals = Vec::new();
+
+        if function_type == FunctionType::Method || function_type == FunctionType::Initializer {
+            locals.push(Local {
+                name: String::from("this"),
+                depth: 0,
+                is_captured: false,
+            });
+        } else {
+            locals.push(Local {
+                name: String::from(""),
+                depth: 0,
+                is_captured: false,
+            });
+        }
 
         Compiler {
             scanner_state: self.scanner_state.clone(),
             error_state: self.error_state.clone(),
-            locals: Rc::new(RwLock::new(Vec::new())),
+            locals: Rc::new(RwLock::new(locals)),
             scope_depth: Rc::new(AtomicUsize::new(0)),
             function: Rc::new(RwLock::new(function)),
             function_type: Rc::new(RwLock::new(function_type)),
             enclosing: Some(Box::new(self.clone())),
-            upvalues: Rc::new(RwLock::new(Vec::new())),
+            up_values: Rc::new(RwLock::new(Vec::new())),
+            class_compiler: self.class_compiler.clone(),
         }
     }
 
@@ -186,7 +230,11 @@ impl Compiler {
     }
 
     fn emit_return(&self) {
-        self.emit_byte(OpCode::Nil.into());
+        if *self.function_type.read() == FunctionType::Initializer {
+            self.emit_bytes(OpCode::GetLocal.into(), 0);
+        } else {
+            self.emit_byte(OpCode::Nil.into());
+        }
         self.emit_byte(OpCode::Return.into());
     }
 
@@ -229,8 +277,24 @@ impl Compiler {
         }
     }
 
+    fn method(&self) {
+        self.consume(TokenType::Identifier, "Expect method name.");
+        let constant = self.identifier_constant(self.scanner_state.read().previous.clone());
+
+        let mut function_type = FunctionType::Method;
+
+        if self.scanner_state.read().previous.clone().lexeme == "init" {
+            function_type = FunctionType::Initializer;
+        }
+
+        self.function(function_type);
+
+        self.emit_bytes(OpCode::Method.into(), constant);
+    }
+
     fn class_declaration(&self) {
         self.consume(TokenType::Identifier, "Expect class name.");
+        let class_name = self.scanner_state.read().previous.clone();
         let name_constant = self.identifier_constant(self.scanner_state.read().previous.clone());
 
         self.declare_variable();
@@ -238,8 +302,32 @@ impl Compiler {
         self.emit_bytes(OpCode::Class.into(), name_constant);
         self.define_variable(name_constant);
 
+        let class_compiler = ClassCompiler {
+            enclosing: self.class_compiler.read().clone(),
+        };
+
+        self.class_compiler
+            .write()
+            .replace(Box::new(class_compiler));
+
+        self.named_variable(class_name, false);
         self.consume(TokenType::LeftBrace, "Expect '{' before class body.");
+        while (!self.check(&TokenType::RightBrace)) && (!self.check(&TokenType::Eof)) {
+            self.method();
+        }
         self.consume(TokenType::RightBrace, "Expect '}' after class body.");
+        self.emit_byte(OpCode::Pop.into());
+
+        let class_compiler = self.class_compiler.read().clone();
+        if let Some(class_compiler) = class_compiler {
+            if let Some(enclosing) = class_compiler.enclosing {
+                self.class_compiler.write().replace(enclosing);
+            } else {
+                self.class_compiler.write().take();
+            }
+        } else {
+            self.class_compiler.write().take();
+        }
     }
 
     fn fun_declaration(&self) {
@@ -284,7 +372,7 @@ impl Compiler {
             self.make_constant(Value::Function(function)),
         );
 
-        for up_value in compiler.upvalues.read().iter() {
+        for up_value in compiler.up_values.read().iter() {
             self.emit_byte(if up_value.is_local { 1 } else { 0 });
             self.emit_byte(up_value.index);
         }
@@ -337,6 +425,10 @@ impl Compiler {
         if self.match_token(TokenType::Semicolon) {
             self.emit_return();
         } else {
+            if *self.function_type.read() == FunctionType::Initializer {
+                self.error("Cannot return a value from an initializer.");
+            }
+
             if *self.function_type.read() == FunctionType::Script {
                 self.error("Cannot return a value from top-level code.");
             }
@@ -610,6 +702,15 @@ impl Compiler {
         self.named_variable(previous, can_assign);
     }
 
+    pub fn this(&self, _can_assign: bool) {
+        if self.class_compiler.read().is_none() {
+            self.error("Cannot use 'this' outside of a class.");
+            return;
+        }
+
+        self.variable(false);
+    }
+
     pub fn and(&self, _can_assign: bool) {
         let end_jump = self.emit_jump(OpCode::JumpIfFalse.into());
 
@@ -674,17 +775,17 @@ impl Compiler {
     }
 
     fn add_up_value(&self, index: u8, is_local: bool) -> u8 {
-        for (i, upvalue) in self.upvalues.read().iter().enumerate() {
+        for (i, upvalue) in self.up_values.read().iter().enumerate() {
             if upvalue.index == index && upvalue.is_local == is_local {
                 return i as u8;
             }
         }
 
-        self.upvalues.write().push(Upvalue { index, is_local });
+        self.up_values.write().push(Upvalue { index, is_local });
 
         self.function.write().up_value_count += 1;
 
-        self.upvalues.read().len() as u8 - 1
+        self.up_values.read().len() as u8 - 1
     }
 
     fn resolve_local(&self, name: Box<Token>) -> u8 {
@@ -764,6 +865,10 @@ impl Compiler {
         if can_assign && self.match_token(TokenType::Equal) {
             self.expression();
             self.emit_bytes(OpCode::SetProperty.into(), name);
+        } else if self.match_token(TokenType::LeftParen) {
+            let arg_count = self.argument_list();
+            self.emit_bytes(OpCode::Invoke.into(), name);
+            self.emit_byte(arg_count);
         } else {
             self.emit_bytes(OpCode::GetProperty.into(), name);
         }
