@@ -77,6 +77,13 @@ pub fn open_file_native(args: Vec<Value>) -> Value {
     }
 }
 
+pub fn exit_native(args: Vec<Value>) -> Value {
+    match args[0] {
+        Value::Int(i) => std::process::exit(i as i32),
+        _ => Value::RunTimeError("Expected int".to_string()),
+    }
+}
+
 impl VM {
     pub fn new() -> Self {
         let mut vm = VM {
@@ -90,6 +97,7 @@ impl VM {
         vm.define_native("input".to_string(), Box::new(input_native), 0);
         vm.define_native("throw".to_string(), Box::new(throw_native), 1);
         vm.define_native("open".to_string(), Box::new(open_file_native), 1);
+        vm.define_native("exit".to_string(), Box::new(exit_native), 1);
 
         vm
     }
