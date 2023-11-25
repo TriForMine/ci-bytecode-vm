@@ -31,6 +31,10 @@ pub enum OpCode {
     Duplicate,
     JumpIfTrue,
     Call,
+    Closure,
+    GetUpvalue,
+    SetUpvalue,
+    CloseUpvalue,
 }
 
 impl From<u8> for OpCode {
@@ -63,6 +67,10 @@ impl From<u8> for OpCode {
             0x19 => OpCode::Duplicate,
             0x1A => OpCode::JumpIfTrue,
             0x1B => OpCode::Call,
+            0x1C => OpCode::Closure,
+            0x1D => OpCode::GetUpvalue,
+            0x1E => OpCode::SetUpvalue,
+            0x1F => OpCode::CloseUpvalue,
             _ => panic!("Unknown OpCode: {}", byte)
         }
     }
@@ -98,6 +106,10 @@ impl From<OpCode> for u8 {
             OpCode::Duplicate => 0x19,
             OpCode::JumpIfTrue => 0x1A,
             OpCode::Call => 0x1B,
+            OpCode::Closure => 0x1C,
+            OpCode::GetUpvalue => 0x1D,
+            OpCode::SetUpvalue => 0x1E,
+            OpCode::CloseUpvalue => 0x1F,
         }
     }
 }
@@ -132,6 +144,10 @@ impl Display for OpCode {
             OpCode::Duplicate => write!(f, "DUPLICATE"),
             OpCode::JumpIfTrue => write!(f, "JUMP_IF_TRUE"),
             OpCode::Call => write!(f, "CALL"),
+            OpCode::Closure => write!(f, "CLOSURE"),
+            OpCode::GetUpvalue => write!(f, "GET_UPVALUE"),
+            OpCode::SetUpvalue => write!(f, "SET_UPVALUE"),
+            OpCode::CloseUpvalue => write!(f, "CLOSE_UPVALUE"),
         }
     }
 }
@@ -152,7 +168,7 @@ impl Chunk {
         }
     }
 
-    #[inline(always)]
+    #[inline(never)]
     pub fn clear(&mut self) {
         self.code.clear();
         self.constants.clear();

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::rc::Rc;
 use crate::chunk::Chunk;
 use parking_lot::RwLock;
 
@@ -9,9 +9,29 @@ pub enum Value {
     Bool(bool),
     Nil,
     String(String),
-    Function(Arc<RwLock<Function>>),
-    NativeFunction(Arc<RwLock<NativeFunction>>),
+    Function(Rc<RwLock<Function>>),
+    Closure(Rc<RwLock<Closure>>),
+    NativeFunction(Rc<RwLock<NativeFunction>>),
     RunTimeError(String),
+    UpValue(Rc<RwLock<UpValueObject>>),
+}
+
+#[derive(Clone, Debug)]
+pub struct UpValueObject {
+    pub location: Value,
+    pub closed: bool,
+}
+
+impl PartialEq for UpValueObject {
+    fn eq(&self, other: &Self) -> bool {
+        self.location == other.location
+    }
+}
+
+impl UpValueObject {
+    pub fn new(location: Value) -> Self {
+        UpValueObject { location, closed: false }
+    }
 }
 
 impl Default for Value {
@@ -39,10 +59,38 @@ impl PartialEq for Value {
 }
 
 #[derive(Clone, Debug)]
+pub struct Closure {
+    pub function: Rc<RwLock<Function>>,
+    pub up_values: Rc<RwLock<Vec<Rc<RwLock<UpValueObject>>>>>,
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct Upvalue {
+    pub index: u8,
+    pub is_local: bool,
+}
+
+impl Closure {
+    pub fn new(function: Rc<RwLock<Function>>) -> Self {
+        Closure {
+            function,
+            up_values: Rc::new(RwLock::new(Vec::new())),
+        }
+    }
+}
+
+impl PartialEq for Closure {
+    fn eq(&self, other: &Self) -> bool {
+        self.function.read().name == other.function.read().name
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Function {
     pub arity: usize,
-    pub chunk: Arc<RwLock<Chunk>>,
+    pub chunk: Rc<RwLock<Chunk>>,
     pub name: String,
+    pub up_value_count: u8,
 }
 
 impl PartialEq for Function {
@@ -55,16 +103,18 @@ impl Function {
     pub fn new(name: String) -> Self {
         Function {
             arity: 0,
-            chunk: Arc::new(RwLock::new(Chunk::new())),
+            chunk: Rc::new(RwLock::new(Chunk::new())),
             name,
+            up_value_count: 0,
         }
     }
 
     pub fn new_script() -> Self {
         Function {
             arity: 0,
-            chunk: Arc::new(RwLock::new(Chunk::new())),
+            chunk: Rc::new(RwLock::new(Chunk::new())),
             name: String::from("script"),
+            up_value_count: 0,
         }
     }
 }
@@ -119,8 +169,10 @@ impl std::fmt::Display for Value {
             Value::Nil => write!(f, "nil"),
             Value::String(s) => write!(f, "{}", s),
             Value::Function(func) => write!(f, "<fn {}>", func.read().name),
+            Value::Closure(closure) => write!(f, "<fn {}>", closure.read().function.read().name),
             Value::NativeFunction(func) => write!(f, "<native fn {}>", func.read().name),
             Value::RunTimeError(s) => write!(f, "{}", s),
+            Value::UpValue(up_value) => write!(f, "{:?}", up_value),
         }
     }
 }

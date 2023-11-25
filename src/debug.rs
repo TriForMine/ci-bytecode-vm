@@ -1,4 +1,5 @@
 use crate::chunk::{Chunk, OpCode};
+use crate::value::Value;
 
 pub fn disassemble(chunk: &Chunk, name: &str) {
     let mut offset = 0;
@@ -74,6 +75,27 @@ pub fn disassemble(chunk: &Chunk, name: &str) {
             OpCode::Duplicate => simple_instruction("OP_DUPLICATE", offset),
             OpCode::JumpIfTrue => jump_instruction(chunk, "OP_JUMP_IF_TRUE", offset),
             OpCode::Call => byte_instruction(chunk, "OP_CALL", offset),
+            OpCode::Closure => {
+                let constant = chunk.code[*offset + 1];
+                print!("{:16} {:4} ", "OP_CLOSURE", constant);
+                println!("{} ", chunk.constants[constant as usize]);
+                let function = match &chunk.constants[constant as usize] {
+                    Value::Function(f) => f,
+                    _ => panic!("Expected function"),
+                };
+                for _ in 0..function.read().up_value_count {
+                    let is_local = chunk.code[*offset + 2] == 1;
+                    let index = chunk.code[*offset + 3];
+                    print!("{:04}      |                     ", *offset);
+                    print!("{} ", if is_local { "local" } else { "upvalue" });
+                    println!("{} ", index);
+                    *offset += 2;
+                }
+                *offset += 2;
+            }
+            OpCode::GetUpvalue => byte_instruction(chunk, "OP_GET_UPVALUE", offset),
+            OpCode::SetUpvalue => byte_instruction(chunk, "OP_SET_UPVALUE", offset),
+            OpCode::CloseUpvalue => simple_instruction("OP_CLOSE_UPVALUE", offset),
         }
     }
 

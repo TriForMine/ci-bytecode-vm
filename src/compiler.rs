@@ -1,4 +1,4 @@
-use std::sync::{Arc};
+use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
 use parking_lot::{RwLock};
 use crate::chunk::{Chunk, OpCode};
@@ -6,7 +6,7 @@ use crate::parser_rules::RULES;
 use crate::scanner::{Scanner, Token};
 use crate::token_type::TokenType;
 use crate::parser_rules::ParseRule;
-use crate::value::{Function, FunctionType, Value};
+use crate::value::{Function, FunctionType, Upvalue, Value};
 use crate::vm::DEBUG_PRINT_CODE;
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
@@ -25,7 +25,7 @@ pub enum Precedence {
 }
 
 struct ScannerState {
-    scanner: Arc<RwLock<Scanner>>,
+    scanner: Rc<RwLock<Scanner>>,
     current: Box<Token>,
     previous: Box<Token>,
 }
@@ -39,33 +39,39 @@ struct ErrorState {
 struct Local {
     pub name: String,
     pub depth: usize,
+    pub is_captured: bool,
 }
 
+#[derive(Clone)]
 pub struct Compiler {
-    scanner_state: Arc<RwLock<ScannerState>>,
-    error_state: Arc<RwLock<ErrorState>>,
-    locals: Arc<RwLock<Vec<Local>>>,
-    scope_depth: Arc<AtomicUsize>,
-    function: Arc<RwLock<Function>>,
-    function_type: Arc<RwLock<FunctionType>>,
+    scanner_state: Rc<RwLock<ScannerState>>,
+    error_state: Rc<RwLock<ErrorState>>,
+    locals: Rc<RwLock<Vec<Local>>>,
+    scope_depth: Rc<AtomicUsize>,
+    function: Rc<RwLock<Function>>,
+    function_type: Rc<RwLock<FunctionType>>,
+    enclosing: Option<Box<Compiler>>,
+    upvalues: Rc<RwLock<Vec<Upvalue>>>,
 }
 
 impl Compiler {
-    pub fn new(function_type: FunctionType, scanner: Arc<RwLock<Scanner>>) -> Self {
+    pub fn new(function_type: FunctionType, scanner: Rc<RwLock<Scanner>>) -> Self {
         Compiler {
-            scanner_state: Arc::new(RwLock::new(ScannerState {
+            scanner_state: Rc::new(RwLock::new(ScannerState {
                 scanner,
                 current: Box::new(Token::new()),
                 previous: Box::new(Token::new()),
             })),
-            error_state: Arc::new(RwLock::new(ErrorState {
+            error_state: Rc::new(RwLock::new(ErrorState {
                 had_error: false,
                 panic_mode: false,
             })),
-            locals: Arc::new(RwLock::new(Vec::new())),
-            scope_depth: Arc::new(AtomicUsize::new(0)),
-            function: Arc::new(RwLock::new(Function::new_script())),
-            function_type: Arc::new(RwLock::new(function_type)),
+            locals: Rc::new(RwLock::new(Vec::new())),
+            scope_depth: Rc::new(AtomicUsize::new(0)),
+            function: Rc::new(RwLock::new(Function::new_script())),
+            function_type: Rc::new(RwLock::new(function_type)),
+            enclosing: None,
+            upvalues: Rc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -78,19 +84,21 @@ impl Compiler {
         Compiler {
             scanner_state: self.scanner_state.clone(),
             error_state: self.error_state.clone(),
-            locals: Arc::new(RwLock::new(Vec::new())),
-            scope_depth: Arc::new(AtomicUsize::new(0)),
-            function: Arc::new(RwLock::new(function)),
-            function_type: Arc::new(RwLock::new(function_type)),
+            locals: Rc::new(RwLock::new(Vec::new())),
+            scope_depth: Rc::new(AtomicUsize::new(0)),
+            function: Rc::new(RwLock::new(function)),
+            function_type: Rc::new(RwLock::new(function_type)),
+            enclosing: Some(Box::new(self.clone())),
+            upvalues: Rc::new(RwLock::new(Vec::new())),
         }
     }
 
-    fn get_chunk(&self) -> Arc<RwLock<Chunk>> {
+    fn get_chunk(&self) -> Rc<RwLock<Chunk>> {
         let function = self.function.read();
         function.chunk.clone()
     }
 
-    pub fn compile(&mut self) -> Option<Arc<RwLock<Function>>> {
+    pub fn compile(&mut self) -> Option<Rc<RwLock<Function>>> {
         self.advance();
 
         while self.scanner_state.read().current.token_type != TokenType::Eof {
@@ -100,7 +108,7 @@ impl Compiler {
         self.end_compiler()
     }
 
-    fn end_compiler(&self) -> Option<Arc<RwLock<Function>>> {
+    fn end_compiler(&self) -> Option<Rc<RwLock<Function>>> {
         self.emit_return();
 
         if !self.error_state.read().had_error && DEBUG_PRINT_CODE {
@@ -248,7 +256,12 @@ impl Compiler {
         compiler.block();
 
         let function = compiler.end_compiler().unwrap();
-        self.emit_bytes(OpCode::Constant.into(), self.make_constant(Value::Function(function)));
+        self.emit_bytes(OpCode::Closure.into(), self.make_constant(Value::Function(function)));
+
+        for upvalue in compiler.upvalues.read().iter() {
+            self.emit_byte(if upvalue.is_local { 1 } else { 0 });
+            self.emit_byte(upvalue.index);
+        }
     }
 
     fn var_declaration(&self) {
@@ -468,7 +481,11 @@ impl Compiler {
 
         let mut locals = self.locals.write();
         while locals.len() > 0 && locals[locals.len() - 1].depth > self.scope_depth.load(std::sync::atomic::Ordering::SeqCst) {
-            self.emit_byte(OpCode::Pop.into());
+            if locals[locals.len() - 1].is_captured {
+                self.emit_byte(OpCode::CloseUpvalue.into());
+            } else {
+                self.emit_byte(OpCode::Pop.into());
+            }
             locals.pop();
         }
     }
@@ -569,6 +586,10 @@ impl Compiler {
         if arg != u8::MAX {
             get_op = OpCode::GetLocal;
             set_op = OpCode::SetLocal;
+        } else if self.resolve_up_value(name.clone()) != u8::MAX {
+            arg = self.resolve_up_value(name.clone());
+            get_op = OpCode::GetUpvalue;
+            set_op = OpCode::SetUpvalue;
         } else {
             get_op = OpCode::GetGlobal;
             set_op = OpCode::SetGlobal;
@@ -581,6 +602,40 @@ impl Compiler {
         } else {
             self.emit_bytes(get_op.into(), arg);
         }
+    }
+
+    fn resolve_up_value(&self, name: Box<Token>) -> u8 {
+        if let Some(enclosing) = &self.enclosing {
+            let local = enclosing.resolve_local(name.clone());
+            if local != u8::MAX {
+                self.enclosing.as_ref().unwrap().locals.write()[local as usize].is_captured = true;
+                return self.add_up_value(local, true);
+            }
+
+            let upvalue = enclosing.resolve_up_value(name.clone());
+            if upvalue != u8::MAX {
+                return self.add_up_value(upvalue, false);
+            }
+        }
+
+        u8::MAX
+    }
+
+    fn add_up_value(&self, index: u8, is_local: bool) -> u8 {
+        for (i, upvalue) in self.upvalues.read().iter().enumerate() {
+            if upvalue.index == index && upvalue.is_local == is_local {
+                return i as u8;
+            }
+        }
+
+        self.upvalues.write().push(Upvalue {
+            index,
+            is_local,
+        });
+
+        self.function.write().up_value_count += 1;
+
+        self.upvalues.read().len() as u8 - 1
     }
 
     fn resolve_local(&self, name: Box<Token>) -> u8 {
@@ -749,6 +804,7 @@ impl Compiler {
         self.locals.write().push(Local {
             name: name.lexeme.clone(),
             depth: self.scope_depth.load(std::sync::atomic::Ordering::SeqCst),
+            is_captured: false,
         });
     }
 

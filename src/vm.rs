@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::rc::Rc;
 use crate::chunk::{OpCode};
 use crate::compiler::Compiler;
 use crate::value::{FunctionType, Value};
@@ -29,7 +29,7 @@ pub struct VM {
 
 #[derive(Clone, Debug)]
 pub struct CallFrame {
-    function: Value,
+    closure: Rc<RwLock<value::Closure>>,
     ip: usize,
     slots: Vec<Value>,
 }
@@ -70,19 +70,23 @@ impl VM {
     pub fn interpret(&mut self, source: String) -> InterpretResult {
         self.reset_stack();
 
-        let scanner = Arc::new(RwLock::new(Scanner::new(source)));
+        let scanner = Rc::new(RwLock::new(Scanner::new(source)));
         let mut compiler = Compiler::new(FunctionType::Script, scanner);
 
         let function = compiler.compile();
 
         let res = match function {
             Some(function) => {
-                self.stack.push(Value::Function(function.clone()));
+                let closure = Rc::new(RwLock::new(value::Closure::new(function.clone())));
+
+                self.stack.pop();
+
                 self.frames.push(CallFrame {
-                    function: Value::Function(function.clone()),
+                    closure: closure.clone(),
                     ip: 0,
-                    slots: Vec::with_capacity(function.read().arity),
+                    slots: Vec::with_capacity(STACK_MAX),
                 });
+
                 InterpretResult::Ok
             }
             None => InterpretResult::CompileError,
@@ -149,18 +153,30 @@ impl VM {
                 }
                 println!();
 
-                let function = frame.function.clone();
-                match function {
-                    Value::Function(ref function) => {
-                        let function = function.read();
-                        let chunk = function.chunk.read();
-                        chunk.disassemble(function.name.as_str());
-                    }
-                    _ => panic!("Expected function"),
-                }
+                frame.closure.read().function.read().chunk.read().disassemble( frame.closure.read().function.clone().read().name.as_str());
             }
 
             match instruction {
+                OpCode::Closure => {
+                    let constant = self.read_constant();
+                    let function = match constant {
+                        Value::Function(function) => function,
+                        _ => panic!("Expected function"),
+                    };
+                    let mut closure = value::Closure::new(function.clone());
+
+                    for i in 0..function.read().up_value_count {
+                        let is_local = self.read_byte() == 1;
+                        let index = self.read_byte();
+                        if is_local {
+                            closure.up_values.write().push(self.capture_up_value(self.frames.last().unwrap().slots[index as usize].clone()));
+                        } else {
+                            closure.up_values.write().push(self.frames.last().unwrap().closure.read().up_values.read()[index as usize].clone());
+                        }
+                    }
+
+                    self.push(Value::Closure(Rc::new(RwLock::new(closure))));
+                }
                 OpCode::Return => {
                     let result = self.pop();
 
@@ -257,6 +273,20 @@ impl VM {
                     let value = self.peek(0).unwrap().clone();
                     self.frames.last_mut().unwrap().slots[slot as usize] = value;
                 }
+                OpCode::GetUpvalue => {
+                    let slot = self.read_byte();
+                    let value = self.frames.last().unwrap().closure.read().up_values.read()[slot as usize].read().location.clone();
+                    self.push(value);
+                }
+                OpCode::SetUpvalue => {
+                    let slot = self.read_byte();
+                    let value = self.peek(0).unwrap().clone();
+                    self.frames.last_mut().unwrap().closure.read().up_values.read()[slot as usize].write().location = value;
+                }
+                OpCode::CloseUpvalue => {
+                    self.close_up_values();
+                    self.pop();
+                },
                 OpCode::JumpIfFalse => {
                     let offset = self.read_short();
                     if self.peek(0).unwrap().is_falsely() {
@@ -295,10 +325,38 @@ impl VM {
         }
     }
 
+    fn close_up_values(&mut self) {
+        let frame = self.frames.last().unwrap();
+        let mut i = 0;
+        for up_value in frame.closure.read().up_values.read().iter() {
+            let mut up_value = up_value.write();
+            if up_value.location == Value::Nil {
+                up_value.location = frame.slots[i].clone();
+                up_value.closed = true;
+            }
+            i += 1;
+        }
+    }
+
+    fn capture_up_value(&mut self, local: Value) -> Rc<RwLock<value::UpValueObject>> {
+        let last_frame = self.frames.last_mut().unwrap();
+        for up_value in last_frame.closure.read().up_values.read().iter() {
+            if up_value.read().location == local {
+                return up_value.clone();
+            }
+        }
+
+        let up_value = Rc::new(RwLock::new(value::UpValueObject::new(Value::Nil)));
+        last_frame.closure.read().up_values.write().push(up_value.clone());
+        up_value.write().location = local;
+        up_value.write().closed = false;
+        up_value
+    }
+
     fn call_value(&mut self, callee: Value, arg_count: u8) -> bool {
         match callee {
-            Value::Function(function) => {
-                self.call(function, arg_count);
+            Value::Closure(closure) => {
+                self.call(closure, arg_count);
                 true
             }
             Value::NativeFunction(function) => {
@@ -308,12 +366,8 @@ impl VM {
                     return false;
                 }
 
-                let mut args = Vec::with_capacity(arg_count as usize);
-                for _ in 0..arg_count {
-                    args.push(self.pop().unwrap());
-                }
-
-                args.reverse();
+                let frame = self.frames.last_mut().unwrap();
+                let args = frame.slots.split_off(frame.slots.len() - arg_count as usize);
 
                 let result = (function.function)(args);
 
@@ -335,9 +389,9 @@ impl VM {
         }
     }
 
-    fn call(&mut self, function: Arc<RwLock<value::Function>>, arg_count: u8) {
-        if arg_count != function.read().arity as u8 {
-            self.runtime_error(format!("Expected {} arguments but got {}", function.read().arity, arg_count).as_str());
+    fn call(&mut self, closure: Rc<RwLock<value::Closure>>, arg_count: u8) {
+        if arg_count != closure.read().function.read().arity as u8 {
+            self.runtime_error(format!("Expected {} arguments but got {}", closure.read().function.read().arity, arg_count).as_str());
             return;
         }
 
@@ -345,7 +399,7 @@ impl VM {
         let mut slots = frame.slots.split_off(frame.slots.len() - arg_count as usize);
 
         self.frames.push(CallFrame {
-            function: Value::Function(function.clone()),
+            closure,
             ip: 0,
             slots,
         });
@@ -355,14 +409,17 @@ impl VM {
         eprintln!("{}", message);
 
         for frame in self.frames.iter().rev() {
-            match frame.function {
-                Value::Function(ref function) => {
-                    let function = function.read();
-                    let chunk = function.chunk.read();
-                    let line = chunk.lines[frame.ip - 1];
-                    eprintln!("[line {}] in {}", line, function.name);
-                }
-                _ => panic!("Expected function"),
+            let function = frame.closure.read().function.clone();
+            let function = function.read();
+            let chunk = function.chunk.read();
+            let instruction = chunk.code[frame.ip - 1];
+            let line = chunk.lines[frame.ip - 1];
+            eprintln!("[line {}] in {}", line, function.name);
+
+            match OpCode::from(instruction) {
+                OpCode::Call => eprintln!("    called here"),
+                OpCode::Closure => eprintln!("    defined here"),
+                _ => (),
             }
         }
 
@@ -372,12 +429,7 @@ impl VM {
 
         if self.frames.len() == 1 {
             let frame = self.frames.last_mut().unwrap();
-            match frame.function {
-                Value::Function(ref function) => {
-                    frame.ip = function.read().chunk.read().code.len() - 1;
-                }
-                _ => panic!("Expected function"),
-            }
+            self.stack.pop();
         } else {
             self.frames.pop();
             frame = self.frames.last_mut().unwrap();
@@ -387,7 +439,7 @@ impl VM {
 
     fn define_native(&mut self, name: String, function: Box<fn(Vec<Value>) -> Value>, arity: usize) {
         self.stack.push(Value::String(name.clone()));
-        let native_function = Arc::new(RwLock::new(value::NativeFunction::new(name.clone(), arity, function)));
+        let native_function = Rc::new(RwLock::new(value::NativeFunction::new(name.clone(), arity, function)));
         self.stack.push(Value::NativeFunction(native_function.clone()));
         self.globals.insert(name.clone(), Value::NativeFunction(native_function));
         self.stack.pop();
@@ -399,15 +451,11 @@ impl VM {
         let frame = self.frames.last_mut();
         match frame {
             Some(frame) => {
-                match frame.function {
-                    Value::Function(ref function) => {
-                        let function = function.read();
-                        let byte = function.chunk.read().code[frame.ip];
-                        frame.ip += 1;
-                        byte
-                    }
-                    _ => panic!("Expected function"),
-                }
+                let function = frame.closure.read().function.clone();
+                let function = function.read();
+                let byte = function.chunk.read().code[frame.ip];
+                frame.ip += 1;
+                byte
             }
             None => panic!("Expected frame"),
         }
@@ -415,31 +463,30 @@ impl VM {
 
     #[inline(always)]
     fn read_constant(&mut self) -> Value {
-        let frame = self.frames.last_mut().unwrap();
-        match frame.function {
-            Value::Function(ref function) => {
-                let function = function.read();
-                let constant = function.chunk.read().code[frame.ip];
+        let frame = self.frames.last_mut();
+        match frame {
+            Some(frame) => {
+                let constant = frame.closure.read().function.read().chunk.read().code[frame.ip];
                 frame.ip += 1;
-                let chunk = function.chunk.read();
-                chunk.constants[constant as usize].clone()
+                frame.closure.read().function.read().chunk.read().constants[constant as usize].clone()
             }
-            _ => panic!("Expected function"),
+            None => panic!("Expected frame"),
         }
     }
 
     #[inline(always)]
     fn read_short(&mut self) -> u16 {
-        let frame = self.frames.last_mut().unwrap();
-        match frame.function {
-            Value::Function(ref function) => {
+        let frame = self.frames.last_mut();
+        match frame {
+            Some(frame) => {
+                let function = frame.closure.read().function.clone();
                 let function = function.read();
-                let byte1 = function.chunk.read().code[frame.ip].clone();
-                let byte2 = function.chunk.read().code[frame.ip + 1].clone();
+                let byte1 = function.chunk.read().code[frame.ip];
+                let byte2 = function.chunk.read().code[frame.ip + 1];
                 frame.ip += 2;
-                (byte1 as u16) << 8 | (byte2 as u16)
+                (byte1 as u16) << 8 | byte2 as u16
             }
-            _ => panic!("Expected function"),
+            None => panic!("Expected frame"),
         }
     }
 
