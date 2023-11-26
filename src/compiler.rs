@@ -44,6 +44,7 @@ struct Local {
 #[derive(Clone, Debug)]
 pub struct ClassCompiler {
     pub enclosing: Option<Box<ClassCompiler>>,
+    pub has_superclass: bool,
 }
 
 #[derive(Clone)]
@@ -159,7 +160,7 @@ impl Compiler {
         if !self.error_state.read().had_error && DEBUG_PRINT_CODE {
             self.get_chunk()
                 .read()
-                .disassemble(&self.function.read().name);
+                .disassemble(&self.function.read().name, None);
         }
 
         if !self.error_state.read().had_error {
@@ -304,11 +305,30 @@ impl Compiler {
 
         let class_compiler = ClassCompiler {
             enclosing: self.class_compiler.read().clone(),
+            has_superclass: false,
         };
 
         self.class_compiler
             .write()
             .replace(Box::new(class_compiler));
+
+        if self.match_token(TokenType::Less) {
+            self.consume(TokenType::Identifier, "Expect superclass name.");
+            self.variable(false);
+
+            if class_name.lexeme == self.scanner_state.read().previous.clone().lexeme {
+                self.error("A class cannot inherit from itself.");
+            }
+
+            self.begin_scope();
+            self.add_local(self.synthetic_token("super"));
+            self.define_variable(0);
+
+            self.named_variable(class_name.clone(), false);
+            self.emit_byte(OpCode::Inherit.into());
+
+            self.class_compiler.write().as_mut().unwrap().has_superclass = true;
+        }
 
         self.named_variable(class_name, false);
         self.consume(TokenType::LeftBrace, "Expect '{' before class body.");
@@ -316,7 +336,15 @@ impl Compiler {
             self.method();
         }
         self.consume(TokenType::RightBrace, "Expect '}' after class body.");
-        self.emit_byte(OpCode::Pop.into());
+
+        if self
+            .class_compiler
+            .read()
+            .clone()
+            .map_or(false, |c| c.has_superclass)
+        {
+            self.end_scope();
+        }
 
         let class_compiler = self.class_compiler.read().clone();
         if let Some(class_compiler) = class_compiler {
@@ -327,6 +355,40 @@ impl Compiler {
             }
         } else {
             self.class_compiler.write().take();
+        }
+    }
+
+    fn synthetic_token(&self, text: &str) -> Box<Token> {
+        let mut token = Token::new();
+        token.lexeme = String::from(text);
+        token.line = 0;
+        token.token_type = TokenType::Identifier;
+        Box::new(token)
+    }
+
+    pub fn super_(&self, _can_assign: bool) {
+        if let Some(class_compiler) = self.class_compiler.read().clone() {
+            if !class_compiler.has_superclass {
+                self.error("Cannot use 'super' in a class with no superclass.");
+            }
+        } else {
+            self.error("Cannot use 'super' outside of a class.");
+        }
+
+        self.consume(TokenType::Dot, "Expect '.' after 'super'.");
+        self.consume(TokenType::Identifier, "Expect superclass method name.");
+        let name = self.identifier_constant(self.scanner_state.read().previous.clone());
+
+        self.named_variable(self.synthetic_token("this"), false);
+
+        if self.match_token(TokenType::LeftParen) {
+            let arg_count = self.argument_list();
+            self.named_variable(self.synthetic_token("super"), false);
+            self.emit_bytes(OpCode::SuperInvoke.into(), name);
+            self.emit_byte(arg_count);
+        } else {
+            self.named_variable(self.synthetic_token("super"), false);
+            self.emit_bytes(OpCode::GetSuper.into(), name);
         }
     }
 
@@ -765,9 +827,9 @@ impl Compiler {
                 return self.add_up_value(local, true);
             }
 
-            let upvalue = enclosing.resolve_up_value(name.clone());
-            if upvalue != u8::MAX {
-                return self.add_up_value(upvalue, false);
+            let up_value = enclosing.resolve_up_value(name.clone());
+            if up_value != u8::MAX {
+                return self.add_up_value(up_value, false);
             }
         }
 

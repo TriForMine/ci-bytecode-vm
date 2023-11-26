@@ -40,6 +40,9 @@ pub enum OpCode {
     SetProperty,
     Method,
     Invoke,
+    Inherit,
+    GetSuper,
+    SuperInvoke,
 }
 
 impl From<u8> for OpCode {
@@ -81,6 +84,9 @@ impl From<u8> for OpCode {
             0x22 => OpCode::SetProperty,
             0x23 => OpCode::Method,
             0x24 => OpCode::Invoke,
+            0x25 => OpCode::Inherit,
+            0x26 => OpCode::GetSuper,
+            0x27 => OpCode::SuperInvoke,
             _ => panic!("Unknown OpCode: {}", byte),
         }
     }
@@ -125,6 +131,9 @@ impl From<OpCode> for u8 {
             OpCode::SetProperty => 0x22,
             OpCode::Method => 0x23,
             OpCode::Invoke => 0x24,
+            OpCode::Inherit => 0x25,
+            OpCode::GetSuper => 0x26,
+            OpCode::SuperInvoke => 0x27,
         }
     }
 }
@@ -168,6 +177,9 @@ impl Display for OpCode {
             OpCode::SetProperty => write!(f, "SET_PROPERTY"),
             OpCode::Method => write!(f, "METHOD"),
             OpCode::Invoke => write!(f, "INVOKE"),
+            OpCode::Inherit => write!(f, "INHERIT"),
+            OpCode::GetSuper => write!(f, "GET_SUPER"),
+            OpCode::SuperInvoke => write!(f, "SUPER_INVOKE"),
         }
     }
 }
@@ -201,7 +213,7 @@ impl Chunk {
     }
 
     #[inline(always)]
-    pub fn disassemble(&self, name: &str) {
-        disassemble(self, name);
+    pub fn disassemble(&self, name: &str, current_offset: Option<usize>) {
+        disassemble(self, name, current_offset);
     }
 }

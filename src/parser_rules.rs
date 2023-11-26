@@ -287,7 +287,7 @@ lazy_static! {
         m.insert(
             TokenType::Super,
             ParseRule {
-                prefix: None,
+                prefix: Some(Box::new(Compiler::super_)),
                 infix: None,
                 precedence: Precedence::None,
             },

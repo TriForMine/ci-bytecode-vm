@@ -226,10 +226,70 @@ impl VM {
                     .read()
                     .chunk
                     .read()
-                    .disassemble(frame.closure.read().function.clone().read().name.as_str());
+                    .disassemble(
+                        frame.closure.read().function.clone().read().name.as_str(),
+                        Some(frame.ip - 1),
+                    );
             }
 
             match instruction {
+                OpCode::SuperInvoke => {
+                    let method = self.read_constant();
+                    let arg_count = self.read_byte();
+                    let superclass = self.pop().unwrap();
+                    match superclass {
+                        Value::Class(superclass) => {
+                            if !self.invoke_from_class(superclass, method, arg_count) {
+                                return InterpretResult::RuntimeError;
+                            }
+                        }
+                        _ => {
+                            self.runtime_error("Superclass must be a class");
+                            return InterpretResult::RuntimeError;
+                        }
+                    }
+                }
+                OpCode::GetSuper => {
+                    let name = self.read_constant();
+                    let superclass = self.pop().unwrap();
+                    match superclass {
+                        Value::Class(_) => {
+                            if !self.bind_method(Rc::new(RwLock::new(superclass)), name) {
+                                return InterpretResult::RuntimeError;
+                            }
+                        }
+                        _ => {
+                            self.runtime_error("Superclass must be a class");
+                            return InterpretResult::RuntimeError;
+                        }
+                    }
+                }
+                OpCode::Inherit => {
+                    let superclass = self.peek(1).unwrap().clone();
+                    match superclass {
+                        Value::Class(superclass) => {
+                            let subclass = self.peek(0).unwrap().clone();
+                            match subclass {
+                                Value::Class(subclass) => {
+                                    subclass
+                                        .write()
+                                        .methods
+                                        .write()
+                                        .extend(superclass.read().methods.read().clone());
+                                    self.pop();
+                                }
+                                _ => {
+                                    self.runtime_error("Superclass must be a class");
+                                    return InterpretResult::RuntimeError;
+                                }
+                            }
+                        }
+                        _ => {
+                            self.runtime_error("Superclass must be a class");
+                            return InterpretResult::RuntimeError;
+                        }
+                    }
+                }
                 OpCode::Invoke => {
                     let method = self.read_constant();
                     let arg_count = self.read_byte();
@@ -499,7 +559,7 @@ impl VM {
         arg_count: u8,
     ) -> bool {
         if let Some(method) = class.read().methods.read().get(&name.to_string()) {
-            self.call(method.clone(), arg_count, false);
+            self.call(method.clone(), arg_count, true);
             true
         } else {
             self.runtime_error(format!("Undefined property '{}'", name).as_str());
@@ -509,6 +569,19 @@ impl VM {
 
     fn bind_method(&mut self, value: Rc<RwLock<value::Value>>, name: Value) -> bool {
         match &*value.read() {
+            Value::Class(class) => {
+                if let Some(method) = class.read().methods.read().get(&name.to_string()) {
+                    let bound_method = Value::BoundMethod(Rc::new(RwLock::new(
+                        value::BoundMethod::new(value.clone(), method.clone()),
+                    )));
+                    self.pop();
+                    self.push(bound_method);
+                    true
+                } else {
+                    self.runtime_error(format!("Undefined property '{}'", name).as_str());
+                    false
+                }
+            }
             Value::Instance(instance) => {
                 if let Some(method) = instance
                     .read()
@@ -602,7 +675,7 @@ impl VM {
                     receiver.read().clone(),
                 );
 
-                self.call(method, arg_count, false)
+                self.call(method, arg_count, true)
             }
             Value::Closure(closure) => {
                 let frame = self.frames.last_mut().unwrap();
@@ -642,8 +715,8 @@ impl VM {
                     }
                 }
 
-                self.push(Value::Instance(instance.clone()));
                 self.pop();
+                self.push(Value::Instance(instance.clone()));
 
                 true
             }
@@ -673,7 +746,12 @@ impl VM {
         (function.read().function)(args)
     }
 
-    fn call(&mut self, closure: Rc<RwLock<value::Closure>>, arg_count: u8, is_init: bool) -> bool {
+    fn call(
+        &mut self,
+        closure: Rc<RwLock<value::Closure>>,
+        arg_count: u8,
+        is_method: bool,
+    ) -> bool {
         if arg_count != closure.read().function.read().arity as u8 {
             self.runtime_error(
                 format!(
@@ -688,7 +766,7 @@ impl VM {
 
         let frame = self.frames.last_mut().unwrap();
 
-        if !is_init {
+        if !is_method {
             frame
                 .slots
                 .insert(frame.slots.len() - arg_count as usize, Value::Nil);
