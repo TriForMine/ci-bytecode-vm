@@ -2,7 +2,7 @@ use crate::chunk::OpCode;
 use crate::compiler::Compiler;
 use crate::scanner::Scanner;
 use crate::value;
-use crate::value::{FunctionType, Value};
+use crate::value::{Closure, FunctionType, Value};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::io::Read;
@@ -29,7 +29,7 @@ pub struct VM {
 
 #[derive(Clone, Debug)]
 pub struct CallFrame {
-    closure: Rc<RwLock<value::Closure>>,
+    closure: Box<Closure>,
     ip: usize,
     slots: Vec<Value>,
 }
@@ -119,12 +119,12 @@ impl VM {
 
         let res = match function {
             Some(function) => {
-                let closure = Rc::new(RwLock::new(value::Closure::new(function.clone())));
+                let closure = Box::new(Closure::new(function.clone()));
 
                 self.stack.pop();
 
                 self.frames.push(CallFrame {
-                    closure: closure.clone(),
+                    closure,
                     ip: 0,
                     slots: Vec::with_capacity(STACK_MAX),
                 });
@@ -219,17 +219,10 @@ impl VM {
                 }
                 println!();
 
-                frame
-                    .closure
-                    .read()
-                    .function
-                    .read()
-                    .chunk
-                    .read()
-                    .disassemble(
-                        frame.closure.read().function.clone().read().name.as_str(),
-                        Some(frame.ip - 1),
-                    );
+                frame.closure.function.read().chunk.read().disassemble(
+                    frame.closure.function.clone().read().name.as_str(),
+                    Some(frame.ip - 1),
+                );
             }
 
             match instruction {
@@ -303,7 +296,7 @@ impl VM {
                         Value::Function(function) => function,
                         _ => panic!("Expected function"),
                     };
-                    let closure = value::Closure::new(function.clone());
+                    let closure = Closure::new(function.clone());
 
                     for _ in 0..function.read().up_value_count {
                         let is_local = self.read_byte() == 1;
@@ -314,14 +307,14 @@ impl VM {
                             ));
                         } else {
                             closure.up_values.write().push(
-                                self.frames.last().unwrap().closure.read().up_values.read()
+                                self.frames.last().unwrap().closure.up_values.read()
                                     [index as usize]
                                     .clone(),
                             );
                         }
                     }
 
-                    self.push(Value::Closure(Rc::new(RwLock::new(closure))));
+                    self.push(Value::Closure(Box::new(closure)));
                 }
                 OpCode::Return => {
                     let result = self.pop();
@@ -424,8 +417,7 @@ impl VM {
                 }
                 OpCode::GetUpvalue => {
                     let slot = self.read_byte();
-                    let value = self.frames.last().unwrap().closure.read().up_values.read()
-                        [slot as usize]
+                    let value = self.frames.last().unwrap().closure.up_values.read()[slot as usize]
                         .read()
                         .location
                         .clone();
@@ -434,13 +426,7 @@ impl VM {
                 OpCode::SetUpvalue => {
                     let slot = self.read_byte();
                     let value = self.peek(0).unwrap().clone();
-                    self.frames
-                        .last_mut()
-                        .unwrap()
-                        .closure
-                        .read()
-                        .up_values
-                        .read()[slot as usize]
+                    self.frames.last_mut().unwrap().closure.up_values.read()[slot as usize]
                         .write()
                         .location = value;
                 }
@@ -631,7 +617,7 @@ impl VM {
     fn close_up_values(&mut self) {
         let frame = self.frames.last().unwrap();
         let mut i = 0;
-        for up_value in frame.closure.read().up_values.read().iter() {
+        for up_value in frame.closure.up_values.read().iter() {
             let mut up_value = up_value.write();
             if up_value.location == Value::Nil {
                 up_value.location = frame.slots[i].clone();
@@ -643,19 +629,14 @@ impl VM {
 
     fn capture_up_value(&mut self, local: Value) -> Rc<RwLock<value::UpValueObject>> {
         let last_frame = self.frames.last_mut().unwrap();
-        for up_value in last_frame.closure.read().up_values.read().iter() {
+        for up_value in last_frame.closure.up_values.read().iter() {
             if up_value.read().location == local {
                 return up_value.clone();
             }
         }
 
         let up_value = Rc::new(RwLock::new(value::UpValueObject::new(Value::Nil)));
-        last_frame
-            .closure
-            .read()
-            .up_values
-            .write()
-            .push(up_value.clone());
+        last_frame.closure.up_values.write().push(up_value.clone());
         up_value.write().location = local;
         up_value.write().closed = false;
         up_value
@@ -746,17 +727,12 @@ impl VM {
         (function.read().function)(args)
     }
 
-    fn call(
-        &mut self,
-        closure: Rc<RwLock<value::Closure>>,
-        arg_count: u8,
-        is_method: bool,
-    ) -> bool {
-        if arg_count != closure.read().function.read().arity as u8 {
+    fn call(&mut self, closure: Box<Closure>, arg_count: u8, is_method: bool) -> bool {
+        if arg_count != closure.function.read().arity as u8 {
             self.runtime_error(
                 format!(
                     "Expected {} arguments but got {}",
-                    closure.read().function.read().arity,
+                    closure.function.read().arity,
                     arg_count
                 )
                 .as_str(),
@@ -789,7 +765,7 @@ impl VM {
         eprintln!("{}", message);
 
         for frame in self.frames.iter().rev() {
-            let function = frame.closure.read().function.clone();
+            let function = frame.closure.function.clone();
             let function = function.read();
             let chunk = function.chunk.read();
             let instruction = chunk.code[frame.ip - 1];
@@ -841,7 +817,7 @@ impl VM {
         let frame = self.frames.last_mut();
         match frame {
             Some(frame) => {
-                let function = frame.closure.read().function.clone();
+                let function = frame.closure.function.clone();
                 let function = function.read();
                 let byte = function.chunk.read().code[frame.ip];
                 frame.ip += 1;
@@ -856,10 +832,9 @@ impl VM {
         let frame = self.frames.last_mut();
         match frame {
             Some(frame) => {
-                let constant = frame.closure.read().function.read().chunk.read().code[frame.ip];
+                let constant = frame.closure.function.read().chunk.read().code[frame.ip];
                 frame.ip += 1;
-                frame.closure.read().function.read().chunk.read().constants[constant as usize]
-                    .clone()
+                frame.closure.function.read().chunk.read().constants[constant as usize].clone()
             }
             None => panic!("Expected frame"),
         }
@@ -870,7 +845,7 @@ impl VM {
         let frame = self.frames.last_mut();
         match frame {
             Some(frame) => {
-                let function = frame.closure.read().function.clone();
+                let function = frame.closure.function.clone();
                 let function = function.read();
                 let byte1 = function.chunk.read().code[frame.ip];
                 let byte2 = function.chunk.read().code[frame.ip + 1];

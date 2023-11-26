@@ -11,7 +11,7 @@ pub enum Value {
     Nil,
     String(String),
     Function(Rc<RwLock<Function>>),
-    Closure(Rc<RwLock<Closure>>),
+    Closure(Box<Closure>),
     NativeFunction(Rc<RwLock<NativeFunction>>),
     RunTimeError(String),
     Class(Rc<RwLock<Class>>),
@@ -22,18 +22,18 @@ pub enum Value {
 #[derive(Clone, Debug)]
 pub struct BoundMethod {
     pub receiver: Rc<RwLock<Value>>,
-    pub method: Rc<RwLock<Closure>>,
+    pub method: Box<Closure>,
 }
 
 impl BoundMethod {
-    pub fn new(receiver: Rc<RwLock<Value>>, method: Rc<RwLock<Closure>>) -> Self {
+    pub fn new(receiver: Rc<RwLock<Value>>, method: Box<Closure>) -> Self {
         BoundMethod { receiver, method }
     }
 }
 
 impl PartialEq for BoundMethod {
     fn eq(&self, other: &Self) -> bool {
-        self.method.read().function.read().name == other.method.read().function.read().name
+        self.method.function.read().name == other.method.function.read().name
     }
 }
 
@@ -55,7 +55,7 @@ impl Instance {
 #[derive(Clone, Debug)]
 pub struct Class {
     pub name: String,
-    pub methods: Rc<RwLock<HashMap<String, Rc<RwLock<Closure>>>>>,
+    pub methods: Rc<RwLock<HashMap<String, Box<Closure>>>>,
 }
 
 impl Class {
@@ -231,7 +231,7 @@ impl std::fmt::Display for Value {
             Value::Nil => write!(f, "nil"),
             Value::String(s) => write!(f, "{}", s),
             Value::Function(func) => write!(f, "<fn {}>", func.read().name),
-            Value::Closure(closure) => write!(f, "<fn {}>", closure.read().function.read().name),
+            Value::Closure(closure) => write!(f, "<fn {}>", closure.function.read().name),
             Value::NativeFunction(func) => write!(f, "<native fn {}>", func.read().name),
             Value::RunTimeError(s) => write!(f, "{}", s),
             Value::Class(class) => write!(f, "<class {}>", class.read().name),
@@ -242,7 +242,7 @@ impl std::fmt::Display for Value {
                 write!(
                     f,
                     "<bound method {}>",
-                    bound_method.read().method.read().function.read().name
+                    bound_method.read().method.function.read().name
                 )
             }
         }
