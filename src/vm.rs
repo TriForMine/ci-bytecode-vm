@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::rc::Rc;
 
-pub const DEBUG_PRINT_CODE: bool = true;
+pub const DEBUG_PRINT_CODE: bool = false;
 pub const DEBUG_TRACE_EXECUTION: bool = false;
 
 pub const FRAMES_MAX: usize = 64;
